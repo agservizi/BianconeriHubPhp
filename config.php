@@ -283,6 +283,296 @@ function normalizeRemoteUrl(?string $url): string
     return $trimmed;
 }
 
+function getAppCacheFile(string $fileName): string
+{
+    $baseDir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'bianconerihub';
+
+    if (!is_dir($baseDir)) {
+        @mkdir($baseDir, 0775, true);
+    }
+
+    return $baseDir . DIRECTORY_SEPARATOR . ltrim($fileName, DIRECTORY_SEPARATOR);
+}
+
+function ensureMatchesTableSupportsExternalSource(PDO $pdo): void
+{
+    static $checked = false;
+
+    if ($checked) {
+        return;
+    }
+
+    try {
+        $columnCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'external_id'");
+        if ($columnCheck && $columnCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD COLUMN external_id VARCHAR(50) DEFAULT NULL AFTER id");
+        }
+
+        $sourceCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'source'");
+        if ($sourceCheck && $sourceCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD COLUMN source VARCHAR(40) DEFAULT NULL AFTER external_id");
+        }
+
+        $uniqueIndexCheck = $pdo->query("SHOW INDEX FROM matches WHERE Key_name = 'matches_external_id_unique'");
+        if ($uniqueIndexCheck && $uniqueIndexCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD UNIQUE KEY matches_external_id_unique (external_id)");
+        }
+
+        $sourceIndexCheck = $pdo->query("SHOW INDEX FROM matches WHERE Key_name = 'matches_source_index'");
+        if ($sourceIndexCheck && $sourceIndexCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD KEY matches_source_index (source)");
+        }
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Unable to ensure matches schema: ' . $exception->getMessage());
+    }
+
+    $checked = true;
+}
+
+function getFootballDataCompetitionCodes(): array
+{
+    return ['SA', 'CL', 'CI', 'SUC'];
+}
+
+function footballDataRequest(string $endpoint, array $query = []): ?array
+{
+    $apiKey = trim((string) env('FOOTBALL_DATA_API_KEY', ''));
+    if ($apiKey === '') {
+        return null;
+    }
+
+    $baseUrl = 'https://api.football-data.org/v4';
+    $url = rtrim($baseUrl, '/') . '/' . ltrim($endpoint, '/');
+    if (!empty($query)) {
+        $url .= '?' . http_build_query($query);
+    }
+
+    $headers = [
+        'X-Auth-Token: ' . $apiKey,
+        'Accept: application/json',
+    ];
+
+    $responseBody = null;
+    $statusCode = 0;
+
+    if (function_exists('curl_init')) {
+        $curl = curl_init($url);
+        curl_setopt_array($curl, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_USERAGENT => 'BianconeriHub/1.0',
+        ]);
+
+        $responseBody = curl_exec($curl);
+        if ($responseBody === false) {
+            error_log('[BianconeriHub] Football-Data request failed: ' . curl_error($curl));
+        }
+        $statusCode = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+        curl_close($curl);
+    } else {
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'timeout' => 10,
+                'header' => implode("\r\n", array_merge($headers, [
+                    'User-Agent: BianconeriHub/1.0',
+                ])),
+            ],
+        ]);
+
+        $responseBody = @file_get_contents($url, false, $context);
+
+        if (isset($http_response_header) && is_array($http_response_header)) {
+            foreach ($http_response_header as $line) {
+                if (preg_match('/^HTTP\/\d\.\d\s+(\d+)/', $line, $matches)) {
+                    $statusCode = (int) $matches[1];
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!is_string($responseBody) || $responseBody === '') {
+        return null;
+    }
+
+    if ($statusCode >= 400 && $statusCode !== 0) {
+        error_log('[BianconeriHub] Football-Data response error: HTTP ' . $statusCode);
+        return null;
+    }
+
+    $decoded = json_decode($responseBody, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        error_log('[BianconeriHub] Football-Data invalid JSON: ' . json_last_error_msg());
+        return null;
+    }
+
+    return is_array($decoded) ? $decoded : null;
+}
+
+function mapFootballDataStatus(?string $status, ?array $score = null): string
+{
+    if (!is_string($status) || $status === '') {
+        return 'Da definire';
+    }
+
+    $normalized = strtoupper($status);
+    $labels = [
+        'SCHEDULED' => 'In programma',
+        'TIMED' => 'Calcio d\'inizio confermato',
+        'POSTPONED' => 'Rinviata',
+        'IN_PLAY' => 'In corso',
+        'PAUSED' => 'Intervallo',
+        'FINISHED' => 'Terminata',
+        'CANCELLED' => 'Annullata',
+    ];
+
+    if ($normalized === 'FINISHED' && is_array($score)) {
+        $home = $score['fullTime']['home'] ?? $score['fullTime']['homeTeam'] ?? null;
+        $away = $score['fullTime']['away'] ?? $score['fullTime']['awayTeam'] ?? null;
+
+        if (is_numeric($home) && is_numeric($away)) {
+            return sprintf('Finale %d-%d', (int) $home, (int) $away);
+        }
+    }
+
+    if ($normalized === 'IN_PLAY' && is_array($score)) {
+        $home = $score['fullTime']['home'] ?? null;
+        $away = $score['fullTime']['away'] ?? null;
+
+        if (is_numeric($home) && is_numeric($away)) {
+            return sprintf('Live %d-%d', (int) $home, (int) $away);
+        }
+    }
+
+    return $labels[$normalized] ?? ucfirst(strtolower($normalized));
+}
+
+function syncJuventusMatchesFromApi(bool $force = false): void
+{
+    static $hasSynced = false;
+
+    if ($hasSynced && !$force) {
+        return;
+    }
+
+    $hasSynced = true;
+
+    $cacheFile = getAppCacheFile('football-data-matches.cache');
+    $cacheTtl = 1800; // 30 minutes
+
+    if (!$force && is_file($cacheFile)) {
+        $lastSync = (int) trim((string) @file_get_contents($cacheFile));
+        if ($lastSync > 0 && (time() - $lastSync) < $cacheTtl) {
+            return;
+        }
+    }
+
+    $apiKey = trim((string) env('FOOTBALL_DATA_API_KEY', ''));
+    if ($apiKey === '') {
+        return;
+    }
+
+    $utcNow = new DateTime('now', new DateTimeZone('UTC'));
+    $query = [
+        'competitions' => implode(',', getFootballDataCompetitionCodes()),
+        'status' => 'SCHEDULED,TIMED,POSTPONED,IN_PLAY,PAUSED',
+        'limit' => 50,
+        'dateFrom' => $utcNow->format('Y-m-d'),
+        'dateTo' => $utcNow->modify('+180 days')->format('Y-m-d'),
+    ];
+
+    $response = footballDataRequest('/teams/109/matches', $query);
+    if (!$response || !isset($response['matches']) || !is_array($response['matches'])) {
+        return;
+    }
+
+    $matchesToPersist = [];
+    $competitions = getFootballDataCompetitionCodes();
+    $localTimezone = new DateTimeZone(date_default_timezone_get());
+
+    foreach ($response['matches'] as $match) {
+        $competitionCode = $match['competition']['code'] ?? '';
+        if ($competitionCode === '' || !in_array($competitionCode, $competitions, true)) {
+            continue;
+        }
+
+        if (!isset($match['id'], $match['utcDate'])) {
+            continue;
+        }
+
+        try {
+            $kickoffUtc = new DateTime($match['utcDate'], new DateTimeZone('UTC'));
+        } catch (Exception $exception) {
+            continue;
+        }
+
+        $kickoffUtc->setTimezone($localTimezone);
+
+        $homeTeamName = $match['homeTeam']['shortName'] ?? $match['homeTeam']['name'] ?? '';
+        $awayTeamName = $match['awayTeam']['shortName'] ?? $match['awayTeam']['name'] ?? '';
+        $homeTeamId = isset($match['homeTeam']['id']) ? (int) $match['homeTeam']['id'] : null;
+
+        $isHome = $homeTeamId === 109 || stripos($homeTeamName, 'Juventus') !== false;
+        $opponent = $isHome ? ($awayTeamName !== '' ? $awayTeamName : 'Avversario da definire') : ($homeTeamName !== '' ? $homeTeamName : 'Avversario da definire');
+
+        $venue = $match['venue'] ?? '';
+        if (trim($venue) === '') {
+            $venue = $isHome ? 'Allianz Stadium' : ($homeTeamName !== '' ? $homeTeamName : 'Da definire');
+        }
+
+        $matchesToPersist[] = [
+            'external_id' => (string) $match['id'],
+            'competition' => $match['competition']['name'] ?? 'Juventus',
+            'opponent' => $opponent,
+            'venue' => $venue,
+            'kickoff_at' => $kickoffUtc->format('Y-m-d H:i:s'),
+            'status' => mapFootballDataStatus($match['status'] ?? null, $match['score'] ?? null),
+            'broadcast' => '',
+        ];
+    }
+
+    if (empty($matchesToPersist)) {
+        return;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return;
+    }
+
+    ensureMatchesTableSupportsExternalSource($pdo);
+
+    try {
+        $pdo->beginTransaction();
+
+        $delete = $pdo->prepare('DELETE FROM matches WHERE source = :source AND kickoff_at >= (NOW() - INTERVAL 30 DAY)');
+        $delete->execute(['source' => 'football-data']);
+
+        $insert = $pdo->prepare('INSERT INTO matches (external_id, source, competition, opponent, venue, kickoff_at, status, broadcast) VALUES (:external_id, :source, :competition, :opponent, :venue, :kickoff_at, :status, :broadcast) ON DUPLICATE KEY UPDATE competition = VALUES(competition), opponent = VALUES(opponent), venue = VALUES(venue), kickoff_at = VALUES(kickoff_at), status = VALUES(status), broadcast = VALUES(broadcast), updated_at = CURRENT_TIMESTAMP');
+
+        foreach ($matchesToPersist as $row) {
+            $insert->execute([
+                'external_id' => $row['external_id'],
+                'source' => 'football-data',
+                'competition' => $row['competition'],
+                'opponent' => $row['opponent'],
+                'venue' => $row['venue'],
+                'kickoff_at' => $row['kickoff_at'],
+                'status' => $row['status'],
+                'broadcast' => $row['broadcast'],
+            ]);
+        }
+
+        $pdo->commit();
+        @file_put_contents($cacheFile, (string) time());
+    } catch (PDOException $exception) {
+        $pdo->rollBack();
+        error_log('[BianconeriHub] Unable to sync matches from Football-Data: ' . $exception->getMessage());
+    }
+}
+
 function syncNewsFeed(bool $force = false): void
 {
     static $lastSyncTimestamp = null;
@@ -603,6 +893,8 @@ function getNewsItems(): array
  */
 function getUpcomingMatches(): array
 {
+    syncJuventusMatchesFromApi();
+
     $pdo = getDatabaseConnection();
     if (!$pdo) {
         return [];
@@ -892,6 +1184,8 @@ function addCommunityPost(int $userId, string $content): array
 
 function findMatchById(int $matchId): ?array
 {
+    syncJuventusMatchesFromApi();
+
     $pdo = getDatabaseConnection();
     if (!$pdo) {
         return null;

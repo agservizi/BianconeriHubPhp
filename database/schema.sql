@@ -7,11 +7,23 @@
 -- - Run this script with a MySQL user that has privileges to create databases,
 --   tables and foreign keys.
 
-CREATE DATABASE IF NOT EXISTS `u427445037_yfqdc`
+CREATE DATABASE IF NOT EXISTS `u427445037_bianconerihub`
   DEFAULT CHARACTER SET utf8mb4
   DEFAULT COLLATE utf8mb4_unicode_ci;
 
-USE `u427445037_yfqdc`;
+USE `u427445037_bianconerihub`;
+
+-- Temporarily disable FK checks so dependent tables can be dropped safely
+SET FOREIGN_KEY_CHECKS = 0;
+
+DROP TABLE IF EXISTS `news_comments`;
+DROP TABLE IF EXISTS `news_likes`;
+DROP TABLE IF EXISTS `community_posts`;
+DROP TABLE IF EXISTS `matches`;
+DROP TABLE IF EXISTS `news`;
+DROP TABLE IF EXISTS `users`;
+
+SET FOREIGN_KEY_CHECKS = 1;
 
 -- ---------------------------------------------------------------------------
 -- Table: users
@@ -98,6 +110,8 @@ CREATE TABLE `news_likes` (
 DROP TABLE IF EXISTS `matches`;
 CREATE TABLE `matches` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `external_id` VARCHAR(50) DEFAULT NULL,
+    `source` VARCHAR(40) DEFAULT NULL,
     `competition` VARCHAR(80) NOT NULL,
     `opponent` VARCHAR(120) NOT NULL,
     `venue` VARCHAR(120) DEFAULT NULL,
@@ -106,7 +120,9 @@ CREATE TABLE `matches` (
     `broadcast` VARCHAR(120) DEFAULT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`)
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `matches_external_id_unique` (`external_id`),
+    KEY `matches_source_index` (`source`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
@@ -130,6 +146,7 @@ CREATE TABLE `community_posts` (
 -- Seed data (optional)
 -- ---------------------------------------------------------------------------
 INSERT INTO `users` (`username`, `email`, `password_hash`, `badge`) VALUES
+    ('carminecavaliere', 'ag.servizi16@gmail.com', '$2y$10$hsNkMXgAIrpV/A9fUx7MoeWQRVcTlm.cMiqsqGSRjQIHXK/78s/JK', 'Fondatore'),
     ('chiara96', 'chiara96@example.com', '$2y$10$C05E8Q6NhuGtpdD95cyE3e0GAn28AL5soiceqd7qV3CyMfCVxYvBy', 'Veterana'),
     ('marco_juve', 'marco@example.com', '$2y$10$3AP9bZY4F1ZXQ17Y27RzO.WsQtPjUJ4YGAPAJHHtYEpPvdEnkQg5G', 'Curva Sud');
 
