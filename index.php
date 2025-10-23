@@ -197,6 +197,125 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    if ($formType === 'community_reaction') {
+        $postId = isset($_POST['post_id']) ? (int) $_POST['post_id'] : 0;
+        $reactionType = strtolower(trim((string) ($_POST['reaction_type'] ?? '')));
+        $redirectUrl = '?page=community';
+        if (isset($_POST['redirect_to'])) {
+            $candidate = trim((string) $_POST['redirect_to']);
+            if ($candidate !== '' && !preg_match('/^https?:/i', $candidate)) {
+                if ($candidate[0] === '?') {
+                    $redirectUrl = $candidate;
+                } elseif ($candidate[0] === '#') {
+                    $redirectUrl .= $candidate;
+                }
+            }
+        }
+
+        if (!validateCsrfToken($_POST['_token'] ?? '')) {
+            setFlash('community', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if ($postId <= 0) {
+            setFlash('community', 'Post non valido.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if (!in_array($reactionType, ['like', 'support'], true)) {
+            setFlash('community', 'Reazione non riconosciuta.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if (!isUserLoggedIn()) {
+            setFlash('community', 'Accedi per partecipare alle reazioni della community.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $user = getLoggedInUser();
+        $result = toggleCommunityReaction($postId, (int) $user['id'], $reactionType);
+
+        if ($result['success']) {
+            $labels = ['like' => 'Mi piace', 'support' => 'Supporto'];
+            $label = $labels[$reactionType] ?? 'reazione';
+            $message = ($result['state'] ?? '') === 'added'
+                ? 'Hai aggiunto il tuo ' . strtolower($label) . '.'
+                : 'Hai rimosso il tuo ' . strtolower($label) . '.';
+            setFlash('community', $message, 'success');
+        } else {
+            $error = $result['message'] ?? 'Impossibile aggiornare la reazione in questo momento.';
+            setFlash('community', $error, 'error');
+        }
+
+        header('Location: ' . $redirectUrl);
+        exit;
+    }
+
+    if ($formType === 'community_comment') {
+        $postId = isset($_POST['post_id']) ? (int) $_POST['post_id'] : 0;
+        $redirectUrl = '?page=community';
+        if (isset($_POST['redirect_to'])) {
+            $candidate = trim((string) $_POST['redirect_to']);
+            if ($candidate !== '' && !preg_match('/^https?:/i', $candidate)) {
+                if ($candidate[0] === '?') {
+                    $redirectUrl = $candidate;
+                } elseif ($candidate[0] === '#') {
+                    $redirectUrl .= $candidate;
+                }
+            }
+        }
+
+        $commentBody = trim((string) ($_POST['message'] ?? ''));
+
+        if (!validateCsrfToken($_POST['_token'] ?? '')) {
+            storeOldInput([
+                'community_comment' => $commentBody,
+                'community_comment_post_id' => $postId,
+            ]);
+            setFlash('community', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if ($postId <= 0) {
+            setFlash('community', 'Post non valido.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if (!isUserLoggedIn()) {
+            storeOldInput([
+                'community_comment' => $commentBody,
+                'community_comment_post_id' => $postId,
+            ]);
+            setFlash('community', 'Effettua il login per commentare.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $user = getLoggedInUser();
+        $result = addCommunityComment($postId, (int) $user['id'], $commentBody);
+
+        if ($result['success']) {
+            forgetOldInput(['community_comment', 'community_comment_post_id']);
+            setFlash('community', 'Commento pubblicato con successo!', 'success');
+        } else {
+            storeOldInput([
+                'community_comment' => $commentBody,
+                'community_comment_post_id' => $postId,
+            ]);
+            $error = $result['message'] ?? 'Impossibile pubblicare il commento.';
+            setFlash('community', $error, 'error');
+        }
+
+        header('Location: ' . $redirectUrl);
+        exit;
+    }
+
     if ($formType === 'news_like_toggle') {
         $slug = trim($_POST['news_slug'] ?? '');
         $newsId = isset($_POST['news_id']) ? (int) $_POST['news_id'] : 0;

@@ -110,6 +110,26 @@ body::after {
         height: 1px;
         background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.35) 28%, rgba(255, 255, 255, 0) 100%);
     }
+
+    .timeline-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 9999px;
+        padding: 0.35rem 0.85rem;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+    }
+
+    .timeline-pill:hover {
+        background: rgba(255, 255, 255, 0.22);
+        border-color: rgba(255, 255, 255, 0.35);
+        color: #000000;
+    }
 }
 
 @layer utilities {
@@ -131,6 +151,14 @@ body::after {
 
     .fan-gradient {
         background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 60%);
+    }
+
+    .scrollbar-hide {
+        -ms-overflow-style: none;
+    }
+
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
     }
 }
 

@@ -726,6 +726,9 @@ function getCommunityStats(): array
             'members' => 0,
             'posts' => 0,
             'upcoming_matches' => 0,
+            'new_members_week' => 0,
+            'daily_interactions' => 0,
+            'events_hosted' => 0,
         ];
     }
 
@@ -733,12 +736,20 @@ function getCommunityStats(): array
         'members' => 0,
         'posts' => 0,
         'upcoming_matches' => 0,
+        'new_members_week' => 0,
+        'daily_interactions' => 0,
+        'events_hosted' => 0,
     ];
 
     try {
         $stats['members'] = (int) $pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
         $stats['posts'] = (int) $pdo->query('SELECT COUNT(*) FROM community_posts')->fetchColumn();
         $stats['upcoming_matches'] = (int) $pdo->query('SELECT COUNT(*) FROM matches WHERE kickoff_at >= NOW()')->fetchColumn();
+        $stats['new_members_week'] = (int) $pdo->query('SELECT COUNT(*) FROM users WHERE created_at >= (NOW() - INTERVAL 7 DAY)')->fetchColumn();
+        $recentComments = (int) $pdo->query('SELECT COUNT(*) FROM community_post_comments WHERE created_at >= (NOW() - INTERVAL 1 DAY)')->fetchColumn();
+        $recentReactions = (int) $pdo->query('SELECT COUNT(*) FROM community_post_reactions WHERE created_at >= (NOW() - INTERVAL 1 DAY)')->fetchColumn();
+        $stats['daily_interactions'] = $recentComments + $recentReactions;
+        $stats['events_hosted'] = (int) $pdo->query('SELECT COUNT(*) FROM matches WHERE kickoff_at BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 30 DAY)')->fetchColumn();
     } catch (PDOException $exception) {
         error_log('[BianconeriHub] Failed to compute community stats: ' . $exception->getMessage());
     }
@@ -1128,12 +1139,222 @@ function getCommunityPosts(): array
         return [];
     }
 
+    $currentUser = getLoggedInUser();
+    $currentUserId = isset($currentUser['id']) ? (int) $currentUser['id'] : 0;
+
+    $sql = 'SELECT
+                p.id,
+                p.user_id,
+                p.content,
+                p.created_at,
+                u.username,
+                u.badge,
+                (SELECT COUNT(*) FROM community_post_comments c WHERE c.post_id = p.id) AS comments_count,
+                (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "like") AS likes_count,
+                (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "support") AS supports_count';
+
+    if ($currentUserId > 0) {
+        $sql .= ',
+                EXISTS(
+                    SELECT 1 FROM community_post_reactions r1
+                    WHERE r1.post_id = p.id AND r1.user_id = :current_user_like AND r1.reaction_type = "like"
+                ) AS has_liked,
+                EXISTS(
+                    SELECT 1 FROM community_post_reactions r2
+                    WHERE r2.post_id = p.id AND r2.user_id = :current_user_support AND r2.reaction_type = "support"
+                ) AS has_supported';
+    } else {
+        $sql .= ', 0 AS has_liked, 0 AS has_supported';
+    }
+
+    $sql .= ' FROM community_posts p
+              INNER JOIN users u ON u.id = p.user_id
+              ORDER BY p.created_at DESC';
+
     try {
-        $statement = $pdo->query('SELECT p.id, p.content, p.created_at, u.username, u.badge FROM community_posts p INNER JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC');
+        $statement = $pdo->prepare($sql);
+        if ($currentUserId > 0) {
+            $statement->bindValue(':current_user_like', $currentUserId, PDO::PARAM_INT);
+            $statement->bindValue(':current_user_support', $currentUserId, PDO::PARAM_INT);
+        }
+        $statement->execute();
+
         $posts = [];
 
         foreach ($statement as $row) {
             $posts[] = [
+                'id' => (int) ($row['id'] ?? 0),
+                'user_id' => (int) ($row['user_id'] ?? 0),
+                'author' => $row['username'] ?? 'Tifoso',
+                'badge' => $row['badge'] ?? 'Tifoso',
+                'content' => $row['content'] ?? '',
+                'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+                'likes_count' => (int) ($row['likes_count'] ?? 0),
+                'supports_count' => (int) ($row['supports_count'] ?? 0),
+                'comments_count' => (int) ($row['comments_count'] ?? 0),
+                'has_liked' => ((int) ($row['has_liked'] ?? 0)) === 1,
+                'has_supported' => ((int) ($row['has_supported'] ?? 0)) === 1,
+            ];
+        }
+
+        return $posts;
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community posts: ' . $exception->getMessage());
+    }
+
+    return [];
+}
+
+function getCommunityPostMeta(int $postId): ?array
+{
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return null;
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT id, user_id FROM community_posts WHERE id = :id LIMIT 1');
+        $statement->execute(['id' => $postId]);
+        $row = $statement->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'user_id' => (int) ($row['user_id'] ?? 0),
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community post meta: ' . $exception->getMessage());
+    }
+
+    return null;
+}
+
+function toggleCommunityReaction(int $postId, int $userId, string $reactionType): array
+{
+    $reaction = strtolower(trim($reactionType));
+    if (!in_array($reaction, ['like', 'support'], true)) {
+        return ['success' => false, 'message' => 'Reazione non valida.'];
+    }
+
+    $postMeta = getCommunityPostMeta($postId);
+    if (!$postMeta) {
+        return ['success' => false, 'message' => 'Post non trovato.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        $check = $pdo->prepare('SELECT 1 FROM community_post_reactions WHERE post_id = :post_id AND user_id = :user_id AND reaction_type = :reaction LIMIT 1');
+        $check->execute([
+            'post_id' => $postId,
+            'user_id' => $userId,
+            'reaction' => $reaction,
+        ]);
+
+        $alreadyReacted = (bool) $check->fetchColumn();
+
+        if ($alreadyReacted) {
+            $delete = $pdo->prepare('DELETE FROM community_post_reactions WHERE post_id = :post_id AND user_id = :user_id AND reaction_type = :reaction');
+            $delete->execute([
+                'post_id' => $postId,
+                'user_id' => $userId,
+                'reaction' => $reaction,
+            ]);
+            $pdo->commit();
+
+            return ['success' => true, 'state' => 'removed'];
+        }
+
+        $insert = $pdo->prepare('INSERT INTO community_post_reactions (post_id, user_id, reaction_type) VALUES (:post_id, :user_id, :reaction)');
+        $insert->execute([
+            'post_id' => $postId,
+            'user_id' => $userId,
+            'reaction' => $reaction,
+        ]);
+
+        $pdo->commit();
+
+        return ['success' => true, 'state' => 'added'];
+    } catch (PDOException $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[BianconeriHub] Failed to toggle community reaction: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'message' => 'Impossibile aggiornare la reazione. Riprova.'];
+}
+
+function addCommunityComment(int $postId, int $userId, string $content): array
+{
+    $trimmed = trim($content);
+
+    if ($trimmed === '') {
+        return ['success' => false, 'message' => 'Il commento non può essere vuoto.'];
+    }
+
+    if (mb_strlen($trimmed) > 600) {
+        return ['success' => false, 'message' => 'Il commento non può superare i 600 caratteri.'];
+    }
+
+    $postMeta = getCommunityPostMeta($postId);
+    if (!$postMeta) {
+        return ['success' => false, 'message' => 'Post non trovato.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
+    }
+
+    try {
+        $statement = $pdo->prepare('INSERT INTO community_post_comments (post_id, user_id, content) VALUES (:post_id, :user_id, :content)');
+        $statement->execute([
+            'post_id' => $postId,
+            'user_id' => $userId,
+            'content' => $trimmed,
+        ]);
+
+        return ['success' => true];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to add community comment: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'message' => 'Impossibile pubblicare il commento al momento.'];
+}
+
+function getCommunityComments(int $postId, int $limit = 20): array
+{
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return [];
+    }
+
+    $limit = max(1, min($limit, 50));
+
+    try {
+        $sql = 'SELECT c.id, c.content, c.created_at, u.username, u.badge
+                FROM community_post_comments c
+                INNER JOIN users u ON u.id = c.user_id
+                WHERE c.post_id = :post_id
+                ORDER BY c.created_at ASC
+                LIMIT ' . $limit;
+        $statement = $pdo->prepare($sql);
+        $statement->bindValue(':post_id', $postId, PDO::PARAM_INT);
+        $statement->execute();
+
+        $comments = [];
+
+        foreach ($statement as $row) {
+            $comments[] = [
                 'id' => (int) ($row['id'] ?? 0),
                 'author' => $row['username'] ?? 'Tifoso',
                 'badge' => $row['badge'] ?? 'Tifoso',
@@ -1142,9 +1363,9 @@ function getCommunityPosts(): array
             ];
         }
 
-        return $posts;
+        return $comments;
     } catch (PDOException $exception) {
-        error_log('[BianconeriHub] Failed to load community posts: ' . $exception->getMessage());
+        error_log('[BianconeriHub] Failed to load community comments: ' . $exception->getMessage());
     }
 
     return [];

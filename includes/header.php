@@ -74,8 +74,8 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
 <body class="bg-black text-white font-['Inter',sans-serif]" data-current-page="<?php echo htmlspecialchars($currentPage ?? 'home', ENT_QUOTES, 'UTF-8'); ?>">
 <div class="relative flex min-h-screen flex-col">
     <header class="relative z-20 px-4 pt-6 pb-10 sm:px-6 lg:px-8">
-        <div class="mx-auto max-w-6xl space-y-6">
-            <div class="fan-card fan-gradient border-white/20 px-4 py-4 sm:px-6 sm:py-5">
+        <div class="mx-auto max-w-6xl">
+            <div class="fan-card fan-gradient border-white/20 px-4 py-4 sm:px-6 sm:py-5 mb-6">
                 <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div class="space-y-2">
                         <span class="hero-chip">
@@ -109,8 +109,9 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                 </div>
             </div>
 
-            <div class="fan-card px-4 py-4 sm:px-6 sm:py-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <a href="?page=home" class="flex items-center gap-3">
+            <div class="sticky top-0 z-40">
+                <div class="fan-card px-4 py-4 sm:px-6 sm:py-5 mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <a href="?page=home" class="flex items-center gap-3">
                     <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-black font-black text-xl">BH</div>
                     <div class="space-y-1">
                         <span class="text-lg font-semibold tracking-wide uppercase">BianconeriHub</span>
@@ -166,7 +167,7 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
             </div>
 
             <?php if ($isHomeRoute): ?>
-                <section class="grid gap-6 lg:grid-cols-5">
+                <section class="grid gap-6 lg:grid-cols-5 mt-6">
                     <div class="fan-card px-6 py-8 lg:col-span-3">
                         <div class="space-y-4">
                             <span class="section-eyebrow">Fan club ufficiale digitale</span>
@@ -207,7 +208,7 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                     </div>
                 </section>
             <?php else: ?>
-                <section class="fan-card px-6 py-7">
+                <section class="fan-card px-6 py-7 mt-6">
                     <div class="space-y-3">
                         <span class="section-eyebrow">Zona tifosi</span>
                         <h1 class="text-3xl font-bold leading-tight"><?php echo htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8'); ?></h1>
