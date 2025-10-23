@@ -15,7 +15,12 @@ $registeredUsers = getRegisteredUsers();
         <?php foreach ($posts as $post): ?>
         <article class="bg-gray-900 p-5 rounded-2xl shadow-lg space-y-3 transition-all duration-300 ease-in-out hover:scale-[1.01]">
             <div class="flex items-center justify-between text-sm">
-                <span class="font-semibold text-white"><?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?></span>
+                <div class="flex items-center gap-2">
+                    <span class="font-semibold text-white"><?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?></span>
+                    <?php if (!empty($post['badge'])): ?>
+                        <span class="badge-accent"><?php echo htmlspecialchars($post['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
+                    <?php endif; ?>
+                </div>
                 <span class="text-gray-500"><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
             </div>
             <p class="text-sm text-gray-300 leading-relaxed"><?php echo htmlspecialchars($post['content'], ENT_QUOTES, 'UTF-8'); ?></p>
@@ -53,6 +58,7 @@ $registeredUsers = getRegisteredUsers();
         <?php if ($isLoggedIn && $loggedUser): ?>
             <form action="" method="post" class="space-y-4">
                 <input type="hidden" name="form_type" value="community_post">
+                <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
                 <textarea name="message" rows="4" class="w-full rounded-xl bg-black/70 border border-gray-800 px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" placeholder="Condividi un pensiero con la community"><?php echo htmlspecialchars($oldMessage, ENT_QUOTES, 'UTF-8'); ?></textarea>
                 <button type="submit" class="w-full py-3 rounded-full bg-white text-black font-semibold transition-all duration-300 hover:bg-juventus-silver">Invia</button>
             </form>

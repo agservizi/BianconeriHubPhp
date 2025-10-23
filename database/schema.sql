@@ -43,11 +43,53 @@ CREATE TABLE `news` (
     `excerpt` TEXT,
     `body` LONGTEXT,
     `image_path` VARCHAR(255) DEFAULT NULL,
+    `source_url` VARCHAR(255) DEFAULT NULL,
     `published_at` DATETIME DEFAULT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `news_slug_unique` (`slug`)
+    UNIQUE KEY `news_slug_unique` (`slug`),
+    UNIQUE KEY `news_source_url_unique` (`source_url`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Table: news_comments
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `news_comments`;
+CREATE TABLE `news_comments` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `news_id` INT UNSIGNED NOT NULL,
+    `user_id` INT UNSIGNED NOT NULL,
+    `content` TEXT NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `news_comments_news_id_foreign` (`news_id`),
+    KEY `news_comments_user_id_foreign` (`user_id`),
+    CONSTRAINT `news_comments_news_id_foreign`
+        FOREIGN KEY (`news_id`) REFERENCES `news` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `news_comments_user_id_foreign`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Table: news_likes
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `news_likes`;
+CREATE TABLE `news_likes` (
+    `news_id` INT UNSIGNED NOT NULL,
+    `user_id` INT UNSIGNED NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`news_id`, `user_id`),
+    KEY `news_likes_user_id_foreign` (`user_id`),
+    CONSTRAINT `news_likes_news_id_foreign`
+        FOREIGN KEY (`news_id`) REFERENCES `news` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `news_likes_user_id_foreign`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------

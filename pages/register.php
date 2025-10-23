@@ -17,6 +17,7 @@ $oldEmail = getOldInput('email');
     <?php else: ?>
         <form action="" method="post" class="bg-gray-900 p-6 rounded-2xl shadow-lg space-y-5">
             <input type="hidden" name="form_type" value="register">
+            <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
             <div class="space-y-2">
                 <label for="reg-username" class="text-sm font-medium">Username</label>
                 <input id="reg-username" name="username" type="text" value="<?php echo htmlspecialchars($oldUsername, ENT_QUOTES, 'UTF-8'); ?>" placeholder="Username" class="w-full bg-black/70 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" required>

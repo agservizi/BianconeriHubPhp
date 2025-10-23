@@ -10,7 +10,11 @@
             <p class="text-center text-gray-500">Il calendario verrà aggiornato a breve. Resta connesso!</p>
         <?php endif; ?>
 
-        <?php foreach ($matches as $match): ?>
+        <?php foreach ($matches as $match):
+            $kickoff = $match['kickoff_at'] ?? null;
+            $timeUntil = $kickoff instanceof DateTimeInterface ? getTimeUntil($kickoff) : null;
+            $broadcastChannels = !empty($match['broadcast']) ? array_map('trim', explode(';', $match['broadcast'])) : [];
+        ?>
         <article class="bg-gray-900 p-5 rounded-2xl shadow-lg transition-all duration-300 ease-in-out hover:scale-[1.01]">
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -34,12 +38,23 @@
                 </div>
                 <div>
                     <p class="text-gray-500">Canali</p>
-                    <p>DAZN, Sky Sport</p>
+                    <?php if (!empty($broadcastChannels)): ?>
+                        <p><?php echo htmlspecialchars(implode(', ', $broadcastChannels), ENT_QUOTES, 'UTF-8'); ?></p>
+                    <?php else: ?>
+                        <p>Da annunciare</p>
+                    <?php endif; ?>
                 </div>
             </div>
             <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
-                <a href="#" class="text-white hover:text-juventus-silver transition-all">Statistiche pre-match</a>
-                <button class="px-3 py-1.5 rounded-full bg-white text-black font-medium transition-all duration-300 hover:bg-juventus-silver hover:text-black">Aggiungi al calendario</button>
+                <p class="text-gray-400">
+                    <?php echo htmlspecialchars($timeUntil ?? 'Dettagli disponibili a breve', ENT_QUOTES, 'UTF-8'); ?>
+                </p>
+                <a href="?action=download_match_ics&amp;id=<?php echo (int) $match['id']; ?>" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white text-black font-medium transition-all duration-300 hover:bg-juventus-silver">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 8.25a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v1.5h1.5a2.25 2.25 0 0 1 2.25 2.25v6a2.25 2.25 0 0 1-2.25 2.25h-9A2.25 2.25 0 0 1 4.5 18v-6A2.25 2.25 0 0 1 6.75 9.75h1.5V8.25Zm1.5 0V6.75A2.25 2.25 0 0 1 12.75 4.5h0a2.25 2.25 0 0 1 2.25 2.25V8.25" />
+                    </svg>
+                    Aggiungi al calendario
+                </a>
             </div>
         </article>
         <?php endforeach; ?>
