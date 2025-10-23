@@ -132,7 +132,7 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
             </div>
         </div>
     </div>
-    <header class="relative z-20 px-4 pt-36 pb-10 sm:px-6 lg:px-8">
+    <header class="relative z-20 px-4 pt-44 pb-12 sm:px-6 lg:px-8">
         <div class="mx-auto max-w-6xl space-y-6">
             <div class="fan-card fan-gradient border-white/20 px-4 py-4 sm:px-6 sm:py-5">
                 <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
