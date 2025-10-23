@@ -1,0 +1,31 @@
+/* Custom Tailwind layer overrides for BianconeriHub */
+@layer base {
+    html {
+        scroll-behavior: smooth;
+    }
+}
+
+@layer components {
+    .badge-accent {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        border-radius: 9999px;
+        background-color: #ffffff;
+        color: #000000;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+}
+
+@layer utilities {
+    .text-gradient-juve {
+        background: linear-gradient(90deg, #ffffff 0%, #c0c0c0 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+    }
+}
