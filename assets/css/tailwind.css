@@ -130,6 +130,17 @@ body::after {
         border-color: rgba(255, 255, 255, 0.35);
         color: #000000;
     }
+
+    .composer-mode-button {
+        cursor: pointer;
+    }
+
+    .composer-mode-button.composer-mode-active {
+        background: #ffffff;
+        color: #000000;
+        border-color: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 10px 30px rgba(255, 255, 255, 0.18);
+    }
 }
 
 @layer utilities {
@@ -147,6 +158,26 @@ body::after {
     .grid-autofill-min-14 {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+    }
+
+    .safe-top-spacing {
+        padding-top: clamp(13rem, 10rem + 6vw, 16rem);
+    }
+
+    @media (min-width: 1024px) {
+        .safe-top-spacing {
+            padding-top: 12rem;
+        }
+    }
+
+    .safe-bottom-offset {
+        padding-bottom: clamp(7rem, 5rem + 5vw, 11rem);
+    }
+
+    @media (min-width: 1024px) {
+        .safe-bottom-offset {
+            padding-bottom: 6rem;
+        }
     }
 
     .fan-gradient {

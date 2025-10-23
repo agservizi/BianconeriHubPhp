@@ -132,7 +132,7 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
             </div>
         </div>
     </div>
-    <header class="relative z-20 px-4 pt-44 pb-12 sm:px-6 lg:px-8">
+    <header class="relative z-20 px-4 safe-top-spacing pb-12 sm:px-6 lg:px-8">
         <div class="mx-auto max-w-6xl space-y-6">
             <div class="fan-card fan-gradient border-white/20 px-4 py-4 sm:px-6 sm:py-5">
                 <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -224,7 +224,7 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
             <?php endif; ?>
         </div>
     </header>
-    <main id="main-content" class="flex-1 px-4 pb-24 space-y-8 sm:px-6 lg:px-8">
+    <main id="main-content" class="flex-1 px-4 safe-bottom-offset space-y-8 sm:px-6 lg:px-8">
         <?php if (!empty($flashMessages)): ?>
             <div class="mx-auto max-w-6xl">
                 <div class="space-y-3">

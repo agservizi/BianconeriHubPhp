@@ -9,7 +9,7 @@ if ($isAuthenticated) {
     $navItems['login']['label'] = 'Login';
 }
 ?>
-<nav class="fixed bottom-0 left-0 w-full bg-gray-950/95 border-t border-gray-800 backdrop-blur-md md:hidden">
+<nav class="fixed bottom-0 left-0 z-50 w-full border-t border-gray-800 bg-gray-950/95 backdrop-blur-md pb-[calc(env(safe-area-inset-bottom,0)+0.5rem)] md:hidden">
     <div class="mx-auto max-w-3xl px-8">
         <ul class="flex items-center justify-between py-3">
             <?php foreach ($navItems as $pageKey => $item):

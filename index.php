@@ -136,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $user = getLoggedInUser();
-        $result = addCommunityPost((int) $user['id'], $_POST['message'] ?? '');
+        $result = addCommunityPost((int) $user['id'], $_POST);
 
         if ($result['success']) {
             setFlash('community', 'Messaggio pubblicato con successo!', 'success');
@@ -144,7 +144,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             regenerateCsrfToken();
         } else {
             setFlash('community', $result['message'], 'error');
-            storeOldInput(['message' => $_POST['message'] ?? '']);
+            $pollOptionsInput = $_POST['poll_options'] ?? [];
+            if (!is_array($pollOptionsInput)) {
+                $pollOptionsInput = [];
+            }
+            storeOldInput([
+                'message' => trim((string) ($_POST['message'] ?? '')),
+                'composer_mode' => $_POST['composer_mode'] ?? 'text',
+                'media_url' => trim((string) ($_POST['media_url'] ?? '')),
+                'poll_question' => trim((string) ($_POST['poll_question'] ?? '')),
+                'poll_options' => array_map(static function ($option) {
+                    return trim((string) $option);
+                }, $pollOptionsInput),
+            ]);
         }
 
         header('Location: ?page=community');

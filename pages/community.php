@@ -20,6 +20,22 @@ $trendingTags = array_slice($trendingTags, 0, 6);
 $recentMembers = array_slice($registeredUsers, 0, 8);
 $oldCommentBody = (string) getOldInput('community_comment', '');
 $oldCommentPostId = (int) getOldInput('community_comment_post_id', 0);
+$oldComposerMode = strtolower((string) getOldInput('composer_mode', 'text'));
+if (!in_array($oldComposerMode, ['text', 'photo', 'poll'], true)) {
+    $oldComposerMode = 'text';
+}
+$oldMediaUrl = (string) getOldInput('media_url', '');
+$oldPollQuestion = (string) getOldInput('poll_question', '');
+$oldPollOptionsInput = getOldInput('poll_options', []);
+if (!is_array($oldPollOptionsInput)) {
+    $oldPollOptionsInput = [];
+}
+$oldPollOptions = [];
+foreach ($oldPollOptionsInput as $optionValue) {
+    $oldPollOptions[] = (string) $optionValue;
+}
+$oldPollOptions = array_slice($oldPollOptions, 0, 4);
+$oldPollOptions = array_pad($oldPollOptions, 4, '');
 ?>
 <section class="mx-auto max-w-6xl px-2 sm:px-4 lg:px-0">
     <div class="grid gap-6 lg:grid-cols-[18rem,minmax(0,1fr),20rem]">
@@ -85,15 +101,35 @@ $oldCommentPostId = (int) getOldInput('community_comment_post_id', 0);
                             <span class="text-xs uppercase tracking-wide text-gray-500"><?php echo htmlspecialchars($stats['posts'] > 0 ? 'Thread attivi ' . number_format($stats['posts'], 0, ',', '.') : 'Thread in partenza', ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                         <?php if ($isLoggedIn && $loggedUser): ?>
-                            <form action="" method="post" class="mt-3 space-y-3">
+                            <form action="" method="post" class="mt-3 space-y-3" data-community-composer>
                                 <input type="hidden" name="form_type" value="community_post">
                                 <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
-                                <textarea name="message" rows="4" class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" placeholder="Lancia una nuova discussione o racconta un momento da stadio..."><?php echo htmlspecialchars($oldMessage, ENT_QUOTES, 'UTF-8'); ?></textarea>
-                                <div class="flex items-center justify-between">
-                                    <div class="flex items-center gap-2 text-xs text-gray-400">
-                                        <span class="timeline-pill">Testo</span>
-                                        <span class="timeline-pill">Foto</span>
-                                        <span class="timeline-pill">Sondaggio</span>
+                                <input type="hidden" name="composer_mode" value="<?php echo htmlspecialchars($oldComposerMode, ENT_QUOTES, 'UTF-8'); ?>" data-composer-mode-input>
+                                <textarea
+                                    name="message"
+                                    rows="4"
+                                    class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
+                                    placeholder="Lancia una nuova discussione o racconta un momento da stadio..."
+                                    data-composer-textarea
+                                    data-placeholder-base="Lancia una nuova discussione o racconta un momento da stadio..."
+                                    data-placeholder-photo="Aggiungi una descrizione alla foto bianconera che vuoi condividere..."
+                                    data-placeholder-poll="Spiega il contesto del sondaggio o aggiungi un commento iniziale..."
+                                ><?php echo htmlspecialchars($oldMessage, ENT_QUOTES, 'UTF-8'); ?></textarea>
+                                <div class="flex flex-wrap items-center justify-between gap-3">
+                                    <div class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                                        <?php
+                                        $composerModes = [
+                                            'text' => 'Testo',
+                                            'photo' => 'Foto',
+                                            'poll' => 'Sondaggio',
+                                        ];
+                                        foreach ($composerModes as $modeKey => $modeLabel):
+                                            $activeClass = $oldComposerMode === $modeKey ? ' composer-mode-active' : '';
+                                        ?>
+                                            <button type="button" class="timeline-pill composer-mode-button<?php echo $activeClass; ?>" data-composer-mode="<?php echo htmlspecialchars($modeKey, ENT_QUOTES, 'UTF-8'); ?>">
+                                                <?php echo $modeLabel; ?>
+                                            </button>
+                                        <?php endforeach; ?>
                                     </div>
                                     <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-all hover:bg-juventus-silver">
                                         Pubblica
@@ -101,6 +137,46 @@ $oldCommentPostId = (int) getOldInput('community_comment_post_id', 0);
                                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 12h12m-6-6v12" />
                                         </svg>
                                     </button>
+                                </div>
+                                <div class="space-y-2 <?php echo $oldComposerMode === 'photo' ? '' : 'hidden'; ?>" data-composer-photo-section>
+                                    <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400">Link immagine</label>
+                                    <input
+                                        type="url"
+                                        name="media_url"
+                                        value="<?php echo htmlspecialchars($oldMediaUrl, ENT_QUOTES, 'UTF-8'); ?>"
+                                        class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
+                                        placeholder="https://..."
+                                        data-composer-media-url
+                                    >
+                                    <p class="text-xs text-gray-500">Accetta URL pubblici (IMGUR, CDNs, sito ufficiale). L’immagine apparirà direttamente nel feed.</p>
+                                </div>
+                                <div class="space-y-3 <?php echo $oldComposerMode === 'poll' ? '' : 'hidden'; ?>" data-composer-poll-section>
+                                    <div class="space-y-2">
+                                        <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400" for="poll-question">Domanda del sondaggio</label>
+                                        <input
+                                            type="text"
+                                            id="poll-question"
+                                            name="poll_question"
+                                            value="<?php echo htmlspecialchars($oldPollQuestion, ENT_QUOTES, 'UTF-8'); ?>"
+                                            class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
+                                            placeholder="Qual è la tua formazione titolare?"
+                                            data-composer-poll-question
+                                        >
+                                    </div>
+                                    <div class="space-y-2">
+                                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">Opzioni (minimo 2, massimo 4)</p>
+                                        <?php foreach ($oldPollOptions as $index => $optionValue): ?>
+                                            <input
+                                                type="text"
+                                                name="poll_options[]"
+                                                value="<?php echo htmlspecialchars($optionValue, ENT_QUOTES, 'UTF-8'); ?>"
+                                                class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
+                                                placeholder="Opzione <?php echo $index + 1; ?>"
+                                                data-composer-poll-option
+                                            >
+                                        <?php endforeach; ?>
+                                        <p class="text-xs text-gray-500">Suggerimento: mantieni le risposte concise (es. “4-3-3 offensivo”).</p>
+                                    </div>
                                 </div>
                             </form>
                         <?php else: ?>
@@ -122,6 +198,10 @@ $oldCommentPostId = (int) getOldInput('community_comment_post_id', 0);
                     $userHasSupported = !empty($post['has_supported']);
                     $isActiveCommentForm = $oldCommentPostId === ($post['id'] ?? 0);
                     $commentPrefill = $isActiveCommentForm ? $oldCommentBody : '';
+                    $contentType = $post['content_type'] ?? 'text';
+                    $mediaUrl = trim((string) ($post['media_url'] ?? ''));
+                    $pollQuestion = trim((string) ($post['poll_question'] ?? ''));
+                    $pollOptions = is_array($post['poll_options'] ?? null) ? $post['poll_options'] : [];
                 ?>
                     <article id="post-<?php echo (int) $post['id']; ?>" class="fan-card px-5 py-6 space-y-4">
                         <div class="flex items-center justify-between text-xs uppercase tracking-wide text-gray-500">
@@ -134,11 +214,40 @@ $oldCommentPostId = (int) getOldInput('community_comment_post_id', 0);
                                     <?php if (!empty($post['badge'])): ?>
                                         <span class="text-xs text-gray-400"><?php echo htmlspecialchars($post['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
                                     <?php endif; ?>
+                                    <?php if ($contentType === 'photo'): ?>
+                                        <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Foto</span>
+                                    <?php elseif ($contentType === 'poll'): ?>
+                                        <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Sondaggio</span>
+                                    <?php endif; ?>
                                 </div>
                             </div>
                             <span><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
-                        <p class="text-sm text-gray-200 leading-relaxed"><?php echo nl2br(htmlspecialchars($post['content'], ENT_QUOTES, 'UTF-8')); ?></p>
+                        <?php if ($contentType === 'photo' && $mediaUrl !== ''): ?>
+                            <div class="overflow-hidden rounded-2xl border border-white/10">
+                                <img src="<?php echo htmlspecialchars($mediaUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-64 w-full object-cover">
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if ($contentType === 'poll' && $pollQuestion !== ''): ?>
+                            <div class="space-y-3">
+                                <p class="text-sm font-semibold text-white"><?php echo htmlspecialchars($pollQuestion, ENT_QUOTES, 'UTF-8'); ?></p>
+                                <?php if (!empty($pollOptions)): ?>
+                                    <ul class="space-y-2 text-sm text-gray-300">
+                                        <?php foreach ($pollOptions as $option): ?>
+                                            <li class="flex items-center justify-between rounded-2xl border border-white/10 bg-black/40 px-4 py-2">
+                                                <span><?php echo htmlspecialchars($option, ENT_QUOTES, 'UTF-8'); ?></span>
+                                                <span class="text-xs uppercase tracking-wide text-gray-500">0 voti</span>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if (trim((string) $post['content']) !== ''): ?>
+                            <p class="text-sm text-gray-200 leading-relaxed"><?php echo nl2br(htmlspecialchars($post['content'], ENT_QUOTES, 'UTF-8')); ?></p>
+                        <?php endif; ?>
                         <div class="flex flex-wrap items-center gap-3 text-xs uppercase tracking-wide text-gray-500">
                             <?php if ($isLoggedIn):
                                 $likeButtonClasses = $userHasLiked ? 'text-white' : 'hover:text-white';

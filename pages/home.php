@@ -168,6 +168,10 @@ for ($index = 0; $index < $maxItems; $index++) {
                     $likeCount = number_format($post['likes_count'] ?? 0, 0, ',', '.');
                     $commentCount = number_format($post['comments_count'] ?? 0, 0, ',', '.');
                     $supportCount = number_format($post['supports_count'] ?? 0, 0, ',', '.');
+                    $contentType = $post['content_type'] ?? 'text';
+                    $mediaUrl = trim((string) ($post['media_url'] ?? ''));
+                    $pollQuestion = trim((string) ($post['poll_question'] ?? ''));
+                    $pollOptions = is_array($post['poll_options'] ?? null) ? $post['poll_options'] : [];
                 ?>
                     <article class="fan-card px-5 py-6 space-y-3">
                         <div class="flex items-center justify-between text-xs uppercase tracking-wide text-gray-500">
@@ -180,7 +184,30 @@ for ($index = 0; $index < $maxItems; $index++) {
                             <span><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                         <h3 class="text-sm font-semibold text-white"><?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?></h3>
-                        <p class="text-sm text-gray-300 leading-relaxed"><?php echo htmlspecialchars($post['content'], ENT_QUOTES, 'UTF-8'); ?></p>
+                        <?php if ($contentType === 'photo' && $mediaUrl !== ''): ?>
+                            <div class="overflow-hidden rounded-2xl border border-white/10">
+                                <img src="<?php echo htmlspecialchars($mediaUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-56 w-full object-cover">
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if ($contentType === 'poll' && $pollQuestion !== ''): ?>
+                            <div class="space-y-3">
+                                <p class="text-sm font-semibold text-white"><?php echo htmlspecialchars($pollQuestion, ENT_QUOTES, 'UTF-8'); ?></p>
+                                <?php if (!empty($pollOptions)): ?>
+                                    <ul class="space-y-2 text-sm text-gray-300">
+                                        <?php foreach ($pollOptions as $option): ?>
+                                            <li class="rounded-2xl border border-white/10 bg-black/40 px-4 py-2">
+                                                <?php echo htmlspecialchars($option, ENT_QUOTES, 'UTF-8'); ?>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if (trim((string) $post['content']) !== ''): ?>
+                            <p class="text-sm text-gray-300 leading-relaxed"><?php echo htmlspecialchars($post['content'], ENT_QUOTES, 'UTF-8'); ?></p>
+                        <?php endif; ?>
                         <div class="flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
                             <a href="?page=community#post-<?php echo (int) $post['id']; ?>" class="inline-flex items-center gap-1 hover:text-white transition-all">
                                 <span class="font-semibold text-white/80"><?php echo $likeCount; ?></span>

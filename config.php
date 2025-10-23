@@ -1146,6 +1146,10 @@ function getCommunityPosts(): array
                 p.id,
                 p.user_id,
                 p.content,
+                p.content_type,
+                p.media_url,
+                p.poll_question,
+                p.poll_options,
                 p.created_at,
                 u.username,
                 u.badge,
@@ -1182,12 +1186,33 @@ function getCommunityPosts(): array
         $posts = [];
 
         foreach ($statement as $row) {
+            $pollOptions = [];
+            if (!empty($row['poll_options'])) {
+                try {
+                    $decoded = json_decode((string) $row['poll_options'], true, 512, JSON_THROW_ON_ERROR);
+                    if (is_array($decoded)) {
+                        foreach ($decoded as $option) {
+                            $optionText = trim((string) $option);
+                            if ($optionText !== '') {
+                                $pollOptions[] = mb_substr($optionText, 0, 120);
+                            }
+                        }
+                    }
+                } catch (\JsonException $exception) {
+                    $pollOptions = [];
+                }
+            }
+
             $posts[] = [
                 'id' => (int) ($row['id'] ?? 0),
                 'user_id' => (int) ($row['user_id'] ?? 0),
                 'author' => $row['username'] ?? 'Tifoso',
                 'badge' => $row['badge'] ?? 'Tifoso',
                 'content' => $row['content'] ?? '',
+                'content_type' => $row['content_type'] ?? 'text',
+                'media_url' => $row['media_url'] ?? '',
+                'poll_question' => $row['poll_question'] ?? '',
+                'poll_options' => $pollOptions,
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
                 'likes_count' => (int) ($row['likes_count'] ?? 0),
                 'supports_count' => (int) ($row['supports_count'] ?? 0),
@@ -1371,16 +1396,73 @@ function getCommunityComments(int $postId, int $limit = 20): array
     return [];
 }
 
-function addCommunityPost(int $userId, string $content): array
+function addCommunityPost(int $userId, array $input): array
 {
-    $trimmed = trim($content);
+    $message = trim((string) ($input['message'] ?? ''));
+    $mode = strtolower((string) ($input['composer_mode'] ?? 'text'));
+    $allowedModes = ['text', 'photo', 'poll'];
+    if (!in_array($mode, $allowedModes, true)) {
+        $mode = 'text';
+    }
 
-    if ($trimmed === '') {
+    if ($message !== '' && mb_strlen($message) > 500) {
+        return ['success' => false, 'message' => 'Il messaggio non può superare i 500 caratteri.'];
+    }
+
+    $mediaUrl = trim((string) ($input['media_url'] ?? ''));
+    $pollQuestion = trim((string) ($input['poll_question'] ?? ''));
+    $pollOptionsRaw = $input['poll_options'] ?? [];
+    if (!is_array($pollOptionsRaw)) {
+        $pollOptionsRaw = [];
+    }
+
+    $pollOptions = [];
+    foreach ($pollOptionsRaw as $option) {
+        $optionText = trim((string) $option);
+        if ($optionText !== '') {
+            $pollOptions[] = mb_substr($optionText, 0, 120);
+        }
+    }
+
+    if ($mode === 'text' && $message === '') {
         return ['success' => false, 'message' => 'Il messaggio non può essere vuoto.'];
     }
 
-    if (mb_strlen($trimmed) > 500) {
-        return ['success' => false, 'message' => 'Il messaggio non può superare i 500 caratteri.'];
+    if ($mode === 'photo') {
+        if ($mediaUrl === '') {
+            return ['success' => false, 'message' => 'Inserisci il link dell’immagine da condividere.'];
+        }
+
+        if (!filter_var($mediaUrl, FILTER_VALIDATE_URL)) {
+            return ['success' => false, 'message' => 'Il link dell’immagine non è valido.'];
+        }
+    } else {
+        $mediaUrl = '';
+    }
+
+    if ($mode === 'poll') {
+        if ($pollQuestion === '') {
+            return ['success' => false, 'message' => 'Inserisci la domanda del sondaggio.'];
+        }
+
+        if (count($pollOptions) < 2) {
+            return ['success' => false, 'message' => 'Aggiungi almeno due opzioni al sondaggio.'];
+        }
+
+        $pollOptions = array_slice($pollOptions, 0, 4);
+    } else {
+        $pollQuestion = '';
+        $pollOptions = [];
+    }
+
+    $pollOptionsJson = null;
+    if ($mode === 'poll') {
+        try {
+            $pollOptionsJson = json_encode($pollOptions, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        } catch (\JsonException $exception) {
+            error_log('[BianconeriHub] Failed to encode poll options: ' . $exception->getMessage());
+            return ['success' => false, 'message' => 'Impossibile salvare il sondaggio. Riprova.'];
+        }
     }
 
     $pdo = getDatabaseConnection();
@@ -1389,10 +1471,14 @@ function addCommunityPost(int $userId, string $content): array
     }
 
     try {
-        $statement = $pdo->prepare('INSERT INTO community_posts (user_id, content) VALUES (:user_id, :content)');
+        $statement = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, media_url, poll_question, poll_options) VALUES (:user_id, :content, :content_type, :media_url, :poll_question, :poll_options)');
         $statement->execute([
             'user_id' => $userId,
-            'content' => $trimmed,
+            'content' => $message,
+            'content_type' => $mode,
+            'media_url' => $mediaUrl !== '' ? $mediaUrl : null,
+            'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
+            'poll_options' => $pollOptionsJson,
         ]);
 
         return ['success' => true];
