@@ -90,7 +90,7 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
 
         <div class="space-y-6">
             <div class="fan-card px-5 py-6">
-                <div class="flex items-start gap-4">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
                     <div class="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-sm font-semibold text-white">
                         <?php echo strtoupper(substr(($loggedUser['username'] ?? 'BH'), 0, 2)); ?>
                     </div>
