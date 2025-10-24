@@ -1,4 +1,16 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const debounce = (callback, delay = 250) => {
+        let timeoutId = null;
+        return (...args) => {
+            if (timeoutId !== null) {
+                window.clearTimeout(timeoutId);
+            }
+            timeoutId = window.setTimeout(() => {
+                callback(...args);
+            }, delay);
+        };
+    };
+
     // Handle mobile navigation toggle to keep menu accessible on small screens.
     const mobileNavToggle = document.querySelector('[data-mobile-nav-toggle]');
     const mobileNavPanel = document.querySelector('[data-mobile-nav-panel]');
@@ -66,6 +78,248 @@ document.addEventListener('DOMContentLoaded', () => {
             item.classList.add('scale-105');
         });
     });
+
+    const initProfileSearchInstant = () => {
+        const root = document.querySelector('[data-profile-search-root]');
+        if (!root) {
+            return;
+        }
+
+        const form = root.querySelector('[data-profile-search-form]');
+        const input = root.querySelector('[data-profile-search-input]');
+        const resultsContainer = root.querySelector('[data-profile-search-results]');
+        const statusElement = root.querySelector('[data-profile-search-status]');
+        const resetControls = root.querySelectorAll('[data-profile-search-reset]');
+
+        if (!form || !input || !resultsContainer) {
+            return;
+        }
+
+        const minimumLength = parseInt(root.dataset.profileSearchMinLength || '2', 10);
+        let renderedQuery = (root.dataset.profileSearchInitialQuery || '').trim();
+        let renderedPage = parseInt(root.dataset.profileSearchInitialPage || '1', 10);
+        if (Number.isNaN(renderedPage) || renderedPage < 1) {
+            renderedPage = 1;
+        }
+
+        const supportsAbort = typeof AbortController !== 'undefined';
+        let activeController = null;
+
+        const setResetVisibility = (shouldShow) => {
+            resetControls.forEach((control) => {
+                if (control instanceof HTMLElement) {
+                    control.classList.toggle('hidden', !shouldShow);
+                }
+            });
+        };
+
+        setResetVisibility(renderedQuery !== '');
+
+        const clearStatusClasses = () => {
+            if (!statusElement) {
+                return;
+            }
+            statusElement.classList.remove(
+                'border-rose-500/40',
+                'bg-rose-500/10',
+                'text-rose-200',
+                'border-amber-400/50',
+                'bg-amber-500/10',
+                'text-amber-200'
+            );
+        };
+
+        const setStatus = (message, tone = 'info') => {
+            if (!statusElement) {
+                return;
+            }
+
+            const text = message ? String(message).trim() : '';
+            if (text === '') {
+                statusElement.textContent = '';
+                statusElement.classList.add('hidden');
+                clearStatusClasses();
+                return;
+            }
+
+            statusElement.textContent = text;
+            statusElement.classList.remove('hidden');
+            clearStatusClasses();
+
+            if (tone === 'error') {
+                statusElement.classList.add('border-rose-500/40', 'bg-rose-500/10', 'text-rose-200');
+            } else if (tone === 'loading') {
+                statusElement.classList.add('border-amber-400/50', 'bg-amber-500/10', 'text-amber-200');
+            }
+        };
+
+        const setFormDisabled = (state) => {
+            form.querySelectorAll('button, input[type="submit"]').forEach((control) => {
+                // eslint-disable-next-line no-param-reassign
+                control.disabled = state;
+            });
+            form.classList.toggle('opacity-75', state);
+        };
+
+        const updateHistory = (query, page) => {
+            if (!window.history || typeof window.history.replaceState !== 'function') {
+                return;
+            }
+
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', 'profile_search');
+
+            const trimmedQuery = query.trim();
+            if (trimmedQuery === '') {
+                url.searchParams.delete('q');
+            } else {
+                url.searchParams.set('q', trimmedQuery);
+            }
+
+            if (page > 1) {
+                url.searchParams.set('p', String(page));
+            } else {
+                url.searchParams.delete('p');
+            }
+
+            url.searchParams.delete('ajax');
+            window.history.replaceState(null, '', url.toString());
+        };
+
+        const buildRequestUrl = (query, page) => {
+            const action = form.getAttribute('action') || window.location.href;
+            const url = new URL(action, window.location.href);
+
+            if (!url.searchParams.has('page')) {
+                url.searchParams.set('page', 'profile_search');
+            }
+
+            url.searchParams.set('ajax', '1');
+            url.searchParams.set('q', query);
+            url.searchParams.set('p', String(page));
+
+            return url;
+        };
+
+        const performRequest = (query, page, options = {}) => {
+            const normalizedQuery = query.trim();
+            const targetPage = page > 0 ? page : 1;
+
+            if (!options.force && normalizedQuery === renderedQuery && targetPage === renderedPage) {
+                return;
+            }
+
+            if (supportsAbort && activeController) {
+                activeController.abort();
+                activeController = null;
+            }
+
+            const requestUrl = buildRequestUrl(normalizedQuery, targetPage);
+            const controller = supportsAbort ? new AbortController() : null;
+            if (controller) {
+                activeController = controller;
+            }
+
+            setFormDisabled(true);
+            setStatus('Ricerca in corso…', 'loading');
+
+            fetch(requestUrl.toString(), {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+                signal: controller ? controller.signal : undefined,
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error(`Unexpected response status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then((payload) => {
+                    if (controller && controller.signal.aborted) {
+                        return;
+                    }
+
+                    setFormDisabled(false);
+                    setStatus('');
+
+                    if (typeof payload.html === 'string') {
+                        resultsContainer.innerHTML = payload.html;
+                    }
+
+                    if (typeof payload.query === 'string') {
+                        input.value = payload.query;
+                    } else {
+                        input.value = normalizedQuery;
+                    }
+
+                    renderedQuery = input.value.trim();
+                    renderedPage = typeof payload.page === 'number' && payload.page > 0 ? payload.page : targetPage;
+
+                    setResetVisibility(renderedQuery !== '');
+                    updateHistory(renderedQuery, renderedPage);
+                    activeController = null;
+                })
+                .catch((error) => {
+                    if (controller && controller.signal.aborted) {
+                        return;
+                    }
+
+                    setFormDisabled(false);
+                    setStatus('Errore durante la ricerca. Riprova tra qualche istante.', 'error');
+                    activeController = null;
+                    // eslint-disable-next-line no-console
+                    console.error('Instant profile search failed:', error);
+                });
+        };
+
+        const handleTyping = debounce(() => {
+            performRequest(input.value, 1);
+        }, 250);
+
+        input.addEventListener('input', () => {
+            handleTyping();
+        });
+
+        form.addEventListener('submit', (event) => {
+            event.preventDefault();
+            performRequest(input.value, 1, { force: true });
+        });
+
+        resetControls.forEach((control) => {
+            control.addEventListener('click', (event) => {
+                event.preventDefault();
+                input.value = '';
+                performRequest('', 1, { force: true });
+            });
+        });
+
+        resultsContainer.addEventListener('click', (event) => {
+            const link = event.target instanceof Element ? event.target.closest('[data-profile-search-page-link]') : null;
+            if (!link || !(link instanceof HTMLElement)) {
+                return;
+            }
+
+            const linkPage = parseInt(link.getAttribute('data-profile-search-page') || '1', 10);
+            const linkQuery = (link.getAttribute('data-profile-search-query') || renderedQuery).trim();
+
+            if (link.tagName.toLowerCase() === 'a') {
+                event.preventDefault();
+            }
+
+            performRequest(linkQuery, Number.isNaN(linkPage) ? 1 : linkPage, { force: true });
+        });
+
+        const currentLength = renderedQuery.length;
+        if (renderedQuery !== '' && currentLength < minimumLength) {
+            setStatus(`Inserisci almeno ${minimumLength} caratteri per avviare la ricerca.`, 'loading');
+        }
+    };
+
+    initProfileSearchInstant();
 
     const composer = document.querySelector('[data-community-composer]');
     if (composer) {
