@@ -136,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $user = getLoggedInUser();
-        $result = addCommunityPost((int) $user['id'], $_POST);
+    $result = addCommunityPost((int) $user['id'], $_POST, $_FILES);
 
         if ($result['success']) {
             setFlash('community', 'Messaggio pubblicato con successo!', 'success');
@@ -151,7 +151,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             storeOldInput([
                 'message' => trim((string) ($_POST['message'] ?? '')),
                 'composer_mode' => $_POST['composer_mode'] ?? 'text',
-                'media_url' => trim((string) ($_POST['media_url'] ?? '')),
                 'poll_question' => trim((string) ($_POST['poll_question'] ?? '')),
                 'poll_options' => array_map(static function ($option) {
                     return trim((string) $option);

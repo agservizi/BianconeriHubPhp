@@ -1396,7 +1396,199 @@ function getCommunityComments(int $postId, int $limit = 20): array
     return [];
 }
 
-function addCommunityPost(int $userId, array $input): array
+function resolveCommunityUploadDirectory(): string
+{
+    return __DIR__ . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'community';
+}
+
+function handleCommunityPhotoUpload(array $file): array
+{
+    $error = $file['error'] ?? UPLOAD_ERR_NO_FILE;
+
+    if ($error === UPLOAD_ERR_NO_FILE) {
+        return ['success' => false, 'message' => ''];
+    }
+
+    if ($error !== UPLOAD_ERR_OK) {
+        $messages = [
+            UPLOAD_ERR_INI_SIZE => 'La foto supera la dimensione massima consentita dal server.',
+            UPLOAD_ERR_FORM_SIZE => 'La foto è troppo grande. Dimensione massima 5 MB.',
+            UPLOAD_ERR_PARTIAL => 'Il caricamento è stato interrotto. Riprova.',
+            UPLOAD_ERR_NO_FILE => 'Nessun file caricato.',
+            UPLOAD_ERR_NO_TMP_DIR => 'Cartella temporanea non disponibile sul server.',
+            UPLOAD_ERR_CANT_WRITE => 'Impossibile salvare la foto sul server.',
+            UPLOAD_ERR_EXTENSION => 'Caricamento interrotto da un’estensione PHP.',
+        ];
+
+        $message = $messages[$error] ?? 'Caricamento immagine non riuscito. Riprova.';
+
+        return ['success' => false, 'message' => $message];
+    }
+
+    $tmpName = $file['tmp_name'] ?? '';
+    if (!is_string($tmpName) || $tmpName === '' || !is_uploaded_file($tmpName)) {
+        return ['success' => false, 'message' => 'Caricamento immagine non valido.'];
+    }
+
+    $size = isset($file['size']) ? (int) $file['size'] : 0;
+    $maxSize = 5 * 1024 * 1024;
+    if ($size <= 0 || $size > $maxSize) {
+        return ['success' => false, 'message' => 'La foto deve pesare al massimo 5 MB.'];
+    }
+
+    $mime = '';
+    if (function_exists('finfo_open')) {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        if ($finfo) {
+            $detected = finfo_file($finfo, $tmpName);
+            if (is_string($detected)) {
+                $mime = $detected;
+            }
+            finfo_close($finfo);
+        }
+    }
+
+    $allowed = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+    ];
+
+    if (!array_key_exists($mime, $allowed)) {
+        $imageInfo = @getimagesize($tmpName);
+        if ($imageInfo && isset($imageInfo['mime']) && array_key_exists($imageInfo['mime'], $allowed)) {
+            $mime = $imageInfo['mime'];
+        } else {
+            return ['success' => false, 'message' => 'Formato immagine non supportato. Usa JPEG, PNG, WEBP o GIF.'];
+        }
+    }
+
+    $extension = $allowed[$mime];
+
+    $baseDir = resolveCommunityUploadDirectory();
+    $subDir = date('Y') . DIRECTORY_SEPARATOR . date('m');
+    $targetDir = $baseDir . DIRECTORY_SEPARATOR . $subDir;
+
+    if (!is_dir($targetDir)) {
+        if (!mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
+            return ['success' => false, 'message' => 'Impossibile creare la cartella di destinazione sul server.'];
+        }
+    }
+
+    try {
+        $random = bin2hex(random_bytes(8));
+    } catch (Throwable $exception) {
+        $random = bin2hex(openssl_random_pseudo_bytes(8));
+    }
+
+    $filename = date('YmdHis') . '-' . $random . '.' . $extension;
+    $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $filename;
+
+    if (!move_uploaded_file($tmpName, $absolutePath)) {
+        return ['success' => false, 'message' => 'Impossibile salvare la foto caricata.'];
+    }
+
+    @chmod($absolutePath, 0644);
+
+    $relativeSubDir = str_replace(DIRECTORY_SEPARATOR, '/', $subDir);
+    $relativePath = 'uploads/community/' . $relativeSubDir . '/' . $filename;
+
+    return [
+        'success' => true,
+        'relative_path' => $relativePath,
+        'absolute_path' => $absolutePath,
+        'mime' => $mime,
+    ];
+}
+
+function handleCommunityClipboardUpload(string $dataUrl, string $originalName = ''): array
+{
+    $trimmed = trim($dataUrl);
+    if ($trimmed === '') {
+        return ['success' => false, 'message' => ''];
+    }
+
+    if (strpos($trimmed, 'base64,') === false) {
+        return ['success' => false, 'message' => 'Formato immagine non riconosciuto.'];
+    }
+
+    [$header, $base64Data] = explode('base64,', $trimmed, 2);
+    if (!preg_match('#^data:(image/(?:jpeg|png|webp|gif))#i', $header, $matches)) {
+        return ['success' => false, 'message' => 'Formato immagine non supportato. Usa JPEG, PNG, WEBP o GIF.'];
+    }
+
+    $mime = strtolower($matches[1]);
+    $binary = base64_decode($base64Data, true);
+    if ($binary === false) {
+        return ['success' => false, 'message' => 'Impossibile leggere i dati incollati.'];
+    }
+
+    $maxSize = 5 * 1024 * 1024;
+    if (strlen($binary) > $maxSize) {
+        return ['success' => false, 'message' => 'La foto inserita dagli appunti è troppo grande (max 5 MB).'];
+    }
+
+    $imageInfo = @getimagesizefromstring($binary);
+    if (!$imageInfo || empty($imageInfo['mime'])) {
+        return ['success' => false, 'message' => 'I dati incollati non sono un’immagine valida.'];
+    }
+
+    $mime = strtolower($imageInfo['mime']);
+
+    $allowed = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+    ];
+
+    if (!array_key_exists($mime, $allowed)) {
+        return ['success' => false, 'message' => 'Formato immagine non supportato. Usa JPEG, PNG, WEBP o GIF.'];
+    }
+
+    $baseDir = resolveCommunityUploadDirectory();
+    $subDir = date('Y') . DIRECTORY_SEPARATOR . date('m');
+    $targetDir = $baseDir . DIRECTORY_SEPARATOR . $subDir;
+
+    if (!is_dir($targetDir)) {
+        if (!mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
+            return ['success' => false, 'message' => 'Impossibile creare la cartella di destinazione sul server.'];
+        }
+    }
+
+    try {
+        $random = bin2hex(random_bytes(8));
+    } catch (Throwable $exception) {
+        $random = bin2hex(openssl_random_pseudo_bytes(8));
+    }
+
+    $extension = $allowed[$mime];
+    $originalBase = trim(pathinfo($originalName, PATHINFO_FILENAME)) ?: 'clipboard';
+    $sanitizedBase = preg_replace('/[^a-z0-9\-]+/i', '-', strtolower($originalBase));
+    $sanitizedBase = trim($sanitizedBase, '-') ?: 'clipboard';
+
+    $filename = $sanitizedBase . '-' . $random . '.' . $extension;
+    $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $filename;
+
+    if (file_put_contents($absolutePath, $binary) === false) {
+        return ['success' => false, 'message' => 'Impossibile salvare l’immagine incollata.'];
+    }
+
+    @chmod($absolutePath, 0644);
+
+    $relativeSubDir = str_replace(DIRECTORY_SEPARATOR, '/', $subDir);
+    $relativePath = 'uploads/community/' . $relativeSubDir . '/' . $filename;
+
+    return [
+        'success' => true,
+        'relative_path' => $relativePath,
+        'absolute_path' => $absolutePath,
+        'mime' => $mime,
+    ];
+}
+
+function addCommunityPost(int $userId, array $input, array $files = []): array
 {
     $message = trim((string) ($input['message'] ?? ''));
     $mode = strtolower((string) ($input['composer_mode'] ?? 'text'));
@@ -1410,6 +1602,10 @@ function addCommunityPost(int $userId, array $input): array
     }
 
     $mediaUrl = trim((string) ($input['media_url'] ?? ''));
+    $mediaFile = $files['media_file'] ?? null;
+    $clipboardData = trim((string) ($input['media_clipboard'] ?? ''));
+    $clipboardName = trim((string) ($input['media_clipboard_name'] ?? ''));
+    $uploadedPhoto = null;
     $pollQuestion = trim((string) ($input['poll_question'] ?? ''));
     $pollOptionsRaw = $input['poll_options'] ?? [];
     if (!is_array($pollOptionsRaw)) {
@@ -1429,12 +1625,34 @@ function addCommunityPost(int $userId, array $input): array
     }
 
     if ($mode === 'photo') {
-        if ($mediaUrl === '') {
-            return ['success' => false, 'message' => 'Inserisci il link dell’immagine da condividere.'];
-        }
+        $hasUploadedFile = is_array($mediaFile) && (($mediaFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE);
 
-        if (!filter_var($mediaUrl, FILTER_VALIDATE_URL)) {
-            return ['success' => false, 'message' => 'Il link dell’immagine non è valido.'];
+        if ($hasUploadedFile) {
+            $uploadResult = handleCommunityPhotoUpload($mediaFile);
+            if (!$uploadResult['success']) {
+                return ['success' => false, 'message' => $uploadResult['message']];
+            }
+
+            $uploadedPhoto = $uploadResult;
+            $mediaUrl = $uploadResult['relative_path'];
+            $clipboardData = '';
+            $clipboardName = '';
+        } elseif (is_string($clipboardData) && trim($clipboardData) !== '') {
+            $uploadResult = handleCommunityClipboardUpload($clipboardData, $clipboardName);
+            if (!$uploadResult['success']) {
+                return ['success' => false, 'message' => $uploadResult['message']];
+            }
+
+            $uploadedPhoto = $uploadResult;
+            $mediaUrl = $uploadResult['relative_path'];
+            $clipboardData = '';
+            $clipboardName = '';
+        } elseif ($mediaUrl !== '') {
+            if (!filter_var($mediaUrl, FILTER_VALIDATE_URL)) {
+                return ['success' => false, 'message' => 'Il link dell’immagine non è valido.'];
+            }
+        } else {
+            return ['success' => false, 'message' => 'Carica una foto dal tuo dispositivo o incolla un’immagine.'];
         }
     } else {
         $mediaUrl = '';
@@ -1483,6 +1701,9 @@ function addCommunityPost(int $userId, array $input): array
 
         return ['success' => true];
     } catch (PDOException $exception) {
+        if ($uploadedPhoto && !empty($uploadedPhoto['absolute_path']) && is_file($uploadedPhoto['absolute_path'])) {
+            @unlink($uploadedPhoto['absolute_path']);
+        }
         error_log('[BianconeriHub] Failed to add community post: ' . $exception->getMessage());
     }
 

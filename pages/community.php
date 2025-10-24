@@ -24,7 +24,6 @@ $oldComposerMode = strtolower((string) getOldInput('composer_mode', 'text'));
 if (!in_array($oldComposerMode, ['text', 'photo', 'poll'], true)) {
     $oldComposerMode = 'text';
 }
-$oldMediaUrl = (string) getOldInput('media_url', '');
 $oldPollQuestion = (string) getOldInput('poll_question', '');
 $oldPollOptionsInput = getOldInput('poll_options', []);
 if (!is_array($oldPollOptionsInput)) {
@@ -101,7 +100,7 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                             <span class="text-xs uppercase tracking-wide text-gray-500"><?php echo htmlspecialchars($stats['posts'] > 0 ? 'Thread attivi ' . number_format($stats['posts'], 0, ',', '.') : 'Thread in partenza', ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                         <?php if ($isLoggedIn && $loggedUser): ?>
-                            <form action="" method="post" class="mt-3 space-y-3" data-community-composer>
+                            <form action="" method="post" enctype="multipart/form-data" class="mt-3 space-y-3" data-community-composer>
                                 <input type="hidden" name="form_type" value="community_post">
                                 <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
                                 <input type="hidden" name="composer_mode" value="<?php echo htmlspecialchars($oldComposerMode, ENT_QUOTES, 'UTF-8'); ?>" data-composer-mode-input>
@@ -138,17 +137,42 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                                         </svg>
                                     </button>
                                 </div>
-                                <div class="space-y-2 <?php echo $oldComposerMode === 'photo' ? '' : 'hidden'; ?>" data-composer-photo-section>
-                                    <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400">Link immagine</label>
-                                    <input
-                                        type="url"
-                                        name="media_url"
-                                        value="<?php echo htmlspecialchars($oldMediaUrl, ENT_QUOTES, 'UTF-8'); ?>"
-                                        class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
-                                        placeholder="https://..."
-                                        data-composer-media-url
-                                    >
-                                    <p class="text-xs text-gray-500">Accetta URL pubblici (IMGUR, CDNs, sito ufficiale). L’immagine apparirà direttamente nel feed.</p>
+                                <div class="space-y-3 <?php echo $oldComposerMode === 'photo' ? '' : 'hidden'; ?>" data-composer-photo-section>
+                                    <div class="space-y-2">
+                                        <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400">Carica immagine</label>
+                                        <input
+                                            type="file"
+                                            name="media_file"
+                                            accept="image/png,image/jpeg,image/webp,image/gif"
+                                            class="hidden"
+                                            data-composer-photo-file
+                                        >
+                                        <input type="hidden" name="media_clipboard" value="" data-composer-photo-clipboard>
+                                        <input type="hidden" name="media_clipboard_name" value="" data-composer-photo-clipboard-name>
+                                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                            <button type="button" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-white hover:text-black" data-composer-photo-trigger>
+                                                Scegli dal dispositivo
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-4 w-4">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5v-9m0 0-3 3m3-3 3 3M6 19.5h12a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 18 4.5H6A2.25 2.25 0 0 0 3.75 6.75V17.25A2.25 2.25 0 0 0 6 19.5Z" />
+                                                </svg>
+                                            </button>
+                                            <p class="text-xs text-gray-500" data-composer-photo-hint>Puoi anche incollare un’immagine direttamente dagli appunti.</p>
+                                        </div>
+                                    </div>
+                                    <div class="hidden rounded-2xl border border-white/10 bg-black/40 p-3" data-composer-photo-preview-wrapper>
+                                        <div class="overflow-hidden rounded-xl border border-white/10">
+                                            <img src="" alt="Anteprima immagine caricata" class="max-h-64 w-full object-cover" data-composer-photo-preview>
+                                        </div>
+                                        <div class="mt-3 flex flex-col gap-2 text-xs text-gray-400 sm:flex-row sm:items-center sm:justify-between">
+                                            <span class="truncate" data-composer-photo-name></span>
+                                            <button type="button" class="inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1 font-semibold text-white transition-all hover:bg-white hover:text-black" data-composer-photo-clear>
+                                                Rimuovi immagine
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-3 w-3">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6m0 12L6 6" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="space-y-3 <?php echo $oldComposerMode === 'poll' ? '' : 'hidden'; ?>" data-composer-poll-section>
                                     <div class="space-y-2">
