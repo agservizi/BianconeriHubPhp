@@ -1354,6 +1354,10 @@ function publishDueCommunityPosts(): void
         return;
     }
 
+    if (!communityPostsExtendedSchemaAvailable($pdo)) {
+        return;
+    }
+
     try {
         $pdo->exec('UPDATE community_posts SET status = "published", published_at = NOW(), scheduled_for = NULL WHERE status = "scheduled" AND scheduled_for IS NOT NULL AND scheduled_for <= NOW()');
     } catch (PDOException $exception) {
@@ -1624,24 +1628,41 @@ function getCommunityPosts(): array
         return [];
     }
 
+    $extendedSchema = communityPostsExtendedSchemaAvailable($pdo);
     $currentUser = getLoggedInUser();
     $currentUserId = isset($currentUser['id']) ? (int) $currentUser['id'] : 0;
 
-    $sql = 'SELECT
-                p.id,
-                p.user_id,
-                p.content,
-                p.content_type,
-                p.media_url,
-                p.poll_question,
-                p.poll_options,
-                p.created_at,
-                p.published_at,
-                u.username,
-                u.badge,
-                (SELECT COUNT(*) FROM community_post_comments c WHERE c.post_id = p.id) AS comments_count,
-                (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "like") AS likes_count,
-                (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "support") AS supports_count';
+    if ($extendedSchema) {
+        $sql = 'SELECT
+                    p.id,
+                    p.user_id,
+                    p.content,
+                    p.content_type,
+                    p.media_url,
+                    p.poll_question,
+                    p.poll_options,
+                    p.created_at,
+                    p.published_at,
+                    p.status,
+                    u.username,
+                    u.badge,
+                    (SELECT COUNT(*) FROM community_post_comments c WHERE c.post_id = p.id) AS comments_count,
+                    (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "like") AS likes_count,
+                    (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "support") AS supports_count';
+    } else {
+        $sql = 'SELECT
+                    p.id,
+                    p.user_id,
+                    p.content,
+                    p.content_type,
+                    p.media_url,
+                    p.created_at,
+                    u.username,
+                    u.badge,
+                    (SELECT COUNT(*) FROM community_post_comments c WHERE c.post_id = p.id) AS comments_count,
+                    (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "like") AS likes_count,
+                    (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "support") AS supports_count';
+    }
 
     if ($currentUserId > 0) {
         $sql .= ',
@@ -1658,9 +1679,15 @@ function getCommunityPosts(): array
     }
 
     $sql .= ' FROM community_posts p
-              INNER JOIN users u ON u.id = p.user_id
-              WHERE p.status = "published" AND (p.published_at IS NULL OR p.published_at <= NOW())
-              ORDER BY p.published_at DESC, p.created_at DESC';
+              INNER JOIN users u ON u.id = p.user_id';
+
+    if ($extendedSchema) {
+        $sql .= ' WHERE (p.status = "published" OR p.status IS NULL OR p.status = "")
+                   AND (p.published_at IS NULL OR p.published_at <= NOW())
+                   ORDER BY p.published_at DESC, p.created_at DESC';
+    } else {
+        $sql .= ' ORDER BY p.created_at DESC';
+    }
 
     try {
         $statement = $pdo->prepare($sql);
@@ -1675,7 +1702,7 @@ function getCommunityPosts(): array
         $rawPosts = [];
         foreach ($statement as $row) {
             $pollOptions = [];
-            if (!empty($row['poll_options'])) {
+            if ($extendedSchema && !empty($row['poll_options'])) {
                 try {
                     $decoded = json_decode((string) $row['poll_options'], true, 512, JSON_THROW_ON_ERROR);
                     if (is_array($decoded)) {
@@ -1699,10 +1726,12 @@ function getCommunityPosts(): array
                 'content' => $row['content'] ?? '',
                 'content_type' => $row['content_type'] ?? 'text',
                 'media_url' => $row['media_url'] ?? '',
-                'poll_question' => $row['poll_question'] ?? '',
+                'poll_question' => $extendedSchema ? ($row['poll_question'] ?? '') : '',
                 'poll_options' => $pollOptions,
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
-                'published_at' => normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time())),
+                'published_at' => $extendedSchema
+                    ? normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time()))
+                    : normalizeToTimestamp($row['created_at'] ?? time()),
                 'likes_count' => (int) ($row['likes_count'] ?? 0),
                 'supports_count' => (int) ($row['supports_count'] ?? 0),
                 'comments_count' => (int) ($row['comments_count'] ?? 0),
@@ -1719,7 +1748,7 @@ function getCommunityPosts(): array
             return $post['id'];
         }, $rawPosts);
 
-        $mediaMap = getCommunityPostMedia($postIds);
+    $mediaMap = getCommunityPostMedia($postIds);
 
         $allMentions = [];
         foreach ($rawPosts as $post) {
@@ -2147,6 +2176,36 @@ function communityMediaTableAvailable(?PDO $connection = null): bool
             $cache = false;
         } else {
             error_log('[BianconeriHub] Failed checking community_post_media availability: ' . $exception->getMessage());
+            $cache = false;
+        }
+    }
+
+    return $cache;
+}
+
+function communityPostsExtendedSchemaAvailable(?PDO $connection = null): bool
+{
+    static $cache;
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        $cache = false;
+        return $cache;
+    }
+
+    try {
+        $pdo->query('SELECT status, poll_question, poll_options, scheduled_for, published_at FROM community_posts LIMIT 1');
+        $cache = true;
+    } catch (PDOException $exception) {
+        $sqlState = $exception->getCode();
+        if ($sqlState === '42S22' || stripos($exception->getMessage(), 'unknown column') !== false) {
+            $cache = false;
+        } else {
+            error_log('[BianconeriHub] Failed checking community_posts extended schema: ' . $exception->getMessage());
             $cache = false;
         }
     }
