@@ -6,7 +6,7 @@ Portale community dedicato ai tifosi juventini con news reali, calendario partit
 
 - PHP 8.1 o superiore con estensioni `pdo_mysql`, `curl`, `mbstring`, `openssl` abilitate
 - Server MySQL/MariaDB 10.6+
-- Composer facoltativo (il progetto non usa librerie esterne al momento)
+- Composer consigliato (richiesto per abilitare le notifiche push tramite Web Push)
 
 ## Configurazione rapida
 
@@ -61,6 +61,35 @@ Portale community dedicato ai tifosi juventini con news reali, calendario partit
    >   CONSTRAINT news_likes_news_id_foreign FOREIGN KEY (news_id) REFERENCES news (id) ON DELETE CASCADE ON UPDATE CASCADE,
    >   CONSTRAINT news_likes_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
    > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+   >
+   > -- Notifiche push (ottobre 2025)
+   > CREATE TABLE community_followers (
+   >   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+   >   user_id INT UNSIGNED NOT NULL,
+   >   follower_id INT UNSIGNED NOT NULL,
+   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   >   UNIQUE KEY community_followers_unique (user_id, follower_id),
+   >   KEY community_followers_follower_id_foreign (follower_id),
+   >   CONSTRAINT community_followers_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE,
+   >   CONSTRAINT community_followers_follower_id_foreign FOREIGN KEY (follower_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+   >
+   > CREATE TABLE user_push_subscriptions (
+   >   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+   >   user_id INT UNSIGNED NOT NULL,
+   >   endpoint VARCHAR(500) NOT NULL,
+   >   public_key VARCHAR(255) NOT NULL,
+   >   auth_token VARCHAR(255) NOT NULL,
+   >   content_encoding VARCHAR(40) DEFAULT 'aes128gcm',
+   >   device_name VARCHAR(120) DEFAULT NULL,
+   >   user_agent VARCHAR(255) DEFAULT NULL,
+   >   scope ENUM('global','following') NOT NULL DEFAULT 'global',
+   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   >   updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+   >   UNIQUE KEY user_push_subscriptions_endpoint_unique (endpoint(191)),
+   >   KEY user_push_subscriptions_user_id_foreign (user_id),
+   >   CONSTRAINT user_push_subscriptions_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
    > ```
 
 3. Avvia il server PHP integrato (opzionale):
@@ -87,6 +116,32 @@ Portale community dedicato ai tifosi juventini con news reali, calendario partit
 - **Community board** interna con messaggi dei tifosi, statistiche aggregate e badge ruolo.
 - **Calendario partite** con download ICS personalizzato (`?action=download_match_ics&id=...`).
 - **Protezione CSRF** su tutti i form e gestione flash message per feedback utente.
+
+## Notifiche push Web Push
+
+1. Installa la libreria PHP per Web Push:
+   ```bash
+   composer require minishlink/web-push
+   ```
+2. Genera le chiavi VAPID (una sola volta):
+   ```bash
+   ./vendor/bin/web-push generate:vapid
+   # oppure
+   npx web-push generate-vapid-keys
+   ```
+3. Aggiungi allo `.env` le nuove variabili:
+   ```env
+   VAPID_PUBLIC_KEY="<chiave pubblica>"
+   VAPID_PRIVATE_KEY="<chiave privata>"
+   PUSH_SUBJECT="mailto:contatto@esempio.com"   # opzionale, ma consigliato
+   PUSH_ICON_PATH="assets/img/push-icon.png"     # opzionale, icona mostrata nelle notifiche
+   ```
+4. Assicurati che il sito sia servito via HTTPS e che `service-worker.js` sia raggiungibile dalla root del dominio.
+5. Gli utenti autenticati possono attivare/disattivare le notifiche dalla pagina community; le preferenze vengono salvate tramite `scripts/push_subscriptions.php` e gestite dal service worker.
+
+Le notifiche vengono inviate automaticamente quando un post viene pubblicato (immediato o programmato) a:
+- tutti gli utenti che hanno optato per le notifiche globali;
+- i follower dell'autore (se dispongono di una sottoscrizione attiva e hanno scelto l'opzione "Solo gli utenti che seguo").
 
 ## Testing manuale consigliato
 

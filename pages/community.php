@@ -96,6 +96,8 @@ if ($hasMorePosts) {
 }
 $nextFeedOffset = count($posts);
 $maxComposerAttachments = communityMediaTableAvailable() ? 4 : 1;
+$pushNotificationsEnabled = $isLoggedIn && isWebPushConfigured();
+$pushPublicKey = $pushNotificationsEnabled ? getPushVapidPublicKey() : '';
 ?>
 <section class="mx-auto max-w-6xl px-2 sm:px-4 lg:px-0">
     <div class="grid gap-6 lg:grid-cols-[18rem,minmax(0,1fr),20rem]">
@@ -353,6 +355,41 @@ $maxComposerAttachments = communityMediaTableAvailable() ? 4 : 1;
         </div>
 
         <aside class="space-y-6">
+            <?php if ($pushNotificationsEnabled): ?>
+            <div
+                class="fan-card px-5 py-6 space-y-4"
+                data-push-setup
+                data-push-endpoint="scripts/push_subscriptions.php"
+                data-push-public-key="<?php echo htmlspecialchars($pushPublicKey, ENT_QUOTES, 'UTF-8'); ?>"
+                data-push-token="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>"
+            >
+                <div class="space-y-2">
+                    <h2 class="text-sm font-semibold uppercase tracking-wide text-gray-400">Notifiche push</h2>
+                    <p class="text-sm text-gray-400">Ricevi un avviso quando la curva pubblica nuovi contenuti o quando scrivono i tifosi che segui.</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <button type="button" class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-all hover:bg-juventus-silver" data-push-enable>
+                        Attiva notifiche
+                    </button>
+                    <button type="button" class="hidden inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-white hover:text-black" data-push-disable>
+                        Disattiva
+                    </button>
+                </div>
+                <div class="space-y-2 text-xs text-gray-400">
+                    <label class="flex items-center gap-2">
+                        <input type="radio" name="push-scope" value="global" class="h-4 w-4 rounded-full border-white/20 bg-black/50" checked>
+                        <span>Tutta la community</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <input type="radio" name="push-scope" value="following" class="h-4 w-4 rounded-full border-white/20 bg-black/50">
+                        <span>Solo gli utenti che seguo</span>
+                    </label>
+                </div>
+                <p class="hidden text-xs text-yellow-400" data-push-unsupported>Il tuo browser non supporta le notifiche push.</p>
+                <p class="hidden text-xs text-gray-400" data-push-status></p>
+            </div>
+            <?php endif; ?>
+
             <?php if (!empty($matches)): ?>
             <div class="fan-card px-5 py-6 space-y-4">
                 <div class="flex items-center justify-between">

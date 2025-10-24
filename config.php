@@ -1,6 +1,11 @@
 <?php
 // Basic application configuration for BianconeriHub
 
+$autoloadFile = __DIR__ . '/vendor/autoload.php';
+if (is_file($autoloadFile)) {
+    require_once $autoloadFile;
+}
+
 if (!function_exists('loadEnvFile')) {
     function loadEnvFile(string $path): void
     {
@@ -1347,6 +1352,484 @@ function getLoggedInUser(): ?array
     return $_SESSION['bh_current_user'] ?? null;
 }
 
+function isWebPushConfigured(): bool
+{
+    if (!class_exists('Minishlink\\WebPush\\WebPush')) {
+        return false;
+    }
+
+    $publicKey = trim((string) env('VAPID_PUBLIC_KEY', ''));
+    $privateKey = trim((string) env('VAPID_PRIVATE_KEY', ''));
+
+    return $publicKey !== '' && $privateKey !== '';
+}
+
+function getPushVapidPublicKey(): string
+{
+    return trim((string) env('VAPID_PUBLIC_KEY', ''));
+}
+
+function getWebPushClient()
+{
+    static $client;
+    static $initialised = false;
+
+    if ($initialised) {
+        return $client;
+    }
+
+    $initialised = true;
+
+    if (!isWebPushConfigured()) {
+        $client = null;
+        return $client;
+    }
+
+    $webPushClass = 'Minishlink\\WebPush\\WebPush';
+    if (!class_exists($webPushClass)) {
+        $client = null;
+        return $client;
+    }
+
+    $publicKey = getPushVapidPublicKey();
+    $privateKey = trim((string) env('VAPID_PRIVATE_KEY', ''));
+    $subject = trim((string) env('PUSH_SUBJECT', ''));
+
+    try {
+        $client = new $webPushClass([
+            'VAPID' => [
+                'subject' => $subject !== '' ? $subject : 'mailto:push@bianconerihub.local',
+                'publicKey' => $publicKey,
+                'privateKey' => $privateKey,
+            ],
+        ]);
+    } catch (\Throwable $exception) {
+        error_log('[BianconeriHub] Unable to initialise WebPush client: ' . $exception->getMessage());
+        $client = null;
+    }
+
+    return $client;
+}
+
+function registerPushSubscription(int $userId, ?array $subscription, string $scope = 'global', array $meta = []): array
+{
+    if ($userId <= 0) {
+        return ['success' => false, 'message' => 'Utente non valido per le notifiche.'];
+    }
+
+    if (!is_array($subscription)) {
+        return ['success' => false, 'message' => 'Dati di sottoscrizione non validi.'];
+    }
+
+    $endpoint = trim((string) ($subscription['endpoint'] ?? ''));
+    $keys = isset($subscription['keys']) && is_array($subscription['keys']) ? $subscription['keys'] : [];
+    $publicKey = trim((string) ($keys['p256dh'] ?? ''));
+    $authToken = trim((string) ($keys['auth'] ?? ''));
+
+    if ($endpoint === '' || $publicKey === '' || $authToken === '') {
+        return ['success' => false, 'message' => 'Impossibile attivare le notifiche su questo dispositivo.'];
+    }
+
+    $scopeValue = strtolower($scope);
+    if (!in_array($scopeValue, ['global', 'following'], true)) {
+        $scopeValue = 'global';
+    }
+
+    $deviceName = trim((string) ($meta['device_name'] ?? ''));
+    if ($deviceName === '') {
+        $deviceName = null;
+    }
+
+    $userAgent = trim((string) ($meta['user_agent'] ?? ''));
+    if ($userAgent === '') {
+        $userAgent = null;
+    }
+
+    $contentEncoding = trim((string) ($meta['content_encoding'] ?? 'aes128gcm'));
+    if ($contentEncoding === '') {
+        $contentEncoding = 'aes128gcm';
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio notifiche non disponibile al momento.'];
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        $check = $pdo->prepare('SELECT id FROM user_push_subscriptions WHERE user_id = :user_id AND endpoint = :endpoint LIMIT 1');
+        $check->execute([
+            'user_id' => $userId,
+            'endpoint' => $endpoint,
+        ]);
+
+        $existingId = (int) $check->fetchColumn();
+
+        if ($existingId > 0) {
+            $update = $pdo->prepare('UPDATE user_push_subscriptions SET public_key = :public_key, auth_token = :auth_token, content_encoding = :content_encoding, device_name = :device_name, user_agent = :user_agent, scope = :scope, updated_at = NOW() WHERE id = :id');
+            $update->execute([
+                'public_key' => $publicKey,
+                'auth_token' => $authToken,
+                'content_encoding' => $contentEncoding,
+                'device_name' => $deviceName,
+                'user_agent' => $userAgent,
+                'scope' => $scopeValue,
+                'id' => $existingId,
+            ]);
+        } else {
+            $insert = $pdo->prepare('INSERT INTO user_push_subscriptions (user_id, endpoint, public_key, auth_token, content_encoding, device_name, user_agent, scope) VALUES (:user_id, :endpoint, :public_key, :auth_token, :content_encoding, :device_name, :user_agent, :scope)');
+            $insert->execute([
+                'user_id' => $userId,
+                'endpoint' => $endpoint,
+                'public_key' => $publicKey,
+                'auth_token' => $authToken,
+                'content_encoding' => $contentEncoding,
+                'device_name' => $deviceName,
+                'user_agent' => $userAgent,
+                'scope' => $scopeValue,
+            ]);
+        }
+
+        $pdo->commit();
+
+        return ['success' => true, 'scope' => $scopeValue];
+    } catch (PDOException $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        error_log('[BianconeriHub] Failed to register push subscription: ' . $exception->getMessage());
+
+        return ['success' => false, 'message' => 'Impossibile salvare le notifiche su questo dispositivo. Riprova più tardi.'];
+    }
+}
+
+function removePushSubscription(int $userId, string $endpoint): array
+{
+    $normalizedEndpoint = trim($endpoint);
+    if ($normalizedEndpoint === '') {
+        return ['success' => false, 'message' => 'Endpoint non valido.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio notifiche non disponibile al momento.'];
+    }
+
+    try {
+        $delete = $pdo->prepare('DELETE FROM user_push_subscriptions WHERE user_id = :user_id AND endpoint = :endpoint');
+        $delete->execute([
+            'user_id' => $userId,
+            'endpoint' => $normalizedEndpoint,
+        ]);
+
+        return ['success' => true];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to remove push subscription: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'message' => 'Impossibile aggiornare le notifiche in questo momento.'];
+}
+
+function removePushSubscriptionById(int $subscriptionId): void
+{
+    if ($subscriptionId <= 0) {
+        return;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return;
+    }
+
+    try {
+        $delete = $pdo->prepare('DELETE FROM user_push_subscriptions WHERE id = :id');
+        $delete->execute(['id' => $subscriptionId]);
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to prune expired push subscription: ' . $exception->getMessage());
+    }
+}
+
+function getCommunityFollowersIds(int $userId): array
+{
+    if ($userId <= 0) {
+        return [];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return [];
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT follower_id FROM community_followers WHERE user_id = :user_id');
+        $statement->execute(['user_id' => $userId]);
+
+        $followers = [];
+        foreach ($statement as $row) {
+            $followerId = (int) ($row['follower_id'] ?? 0);
+            if ($followerId > 0) {
+                $followers[$followerId] = $followerId;
+            }
+        }
+
+        return array_values($followers);
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community followers: ' . $exception->getMessage());
+    }
+
+    return [];
+}
+
+function getPushSubscriptionsForPost(int $authorId): array
+{
+    if ($authorId <= 0) {
+        return [];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return [];
+    }
+
+    $subscriptions = [];
+
+    try {
+        $globalStatement = $pdo->prepare('SELECT id, user_id, endpoint, public_key, auth_token, content_encoding, scope FROM user_push_subscriptions WHERE scope = "global" AND user_id <> :author');
+        $globalStatement->execute(['author' => $authorId]);
+
+        foreach ($globalStatement as $row) {
+            $id = (int) ($row['id'] ?? 0);
+            if ($id <= 0) {
+                continue;
+            }
+
+            $subscriptions[$id] = [
+                'id' => $id,
+                'user_id' => (int) ($row['user_id'] ?? 0),
+                'endpoint' => $row['endpoint'] ?? '',
+                'public_key' => $row['public_key'] ?? '',
+                'auth_token' => $row['auth_token'] ?? '',
+                'content_encoding' => $row['content_encoding'] ?? 'aes128gcm',
+                'scope' => $row['scope'] ?? 'global',
+            ];
+        }
+
+        $followers = getCommunityFollowersIds($authorId);
+        if (!empty($followers)) {
+            $placeholders = implode(',', array_fill(0, count($followers), '?'));
+            $followersStatement = $pdo->prepare('SELECT id, user_id, endpoint, public_key, auth_token, content_encoding, scope FROM user_push_subscriptions WHERE user_id IN (' . $placeholders . ') AND scope = "following"');
+            $followersStatement->execute(array_values($followers));
+
+            foreach ($followersStatement as $row) {
+                $id = (int) ($row['id'] ?? 0);
+                if ($id <= 0) {
+                    continue;
+                }
+
+                if ((int) ($row['user_id'] ?? 0) === $authorId) {
+                    continue;
+                }
+
+                $subscriptions[$id] = [
+                    'id' => $id,
+                    'user_id' => (int) ($row['user_id'] ?? 0),
+                    'endpoint' => $row['endpoint'] ?? '',
+                    'public_key' => $row['public_key'] ?? '',
+                    'auth_token' => $row['auth_token'] ?? '',
+                    'content_encoding' => $row['content_encoding'] ?? 'aes128gcm',
+                    'scope' => $row['scope'] ?? 'following',
+                ];
+            }
+        }
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load push subscriptions: ' . $exception->getMessage());
+    }
+
+    return array_values(array_filter($subscriptions, static function (array $subscription): bool {
+        return $subscription['endpoint'] !== '' && $subscription['public_key'] !== '' && $subscription['auth_token'] !== '';
+    }));
+}
+
+function findCommunityPostForNotification(int $postId): ?array
+{
+    if ($postId <= 0) {
+        return null;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return null;
+    }
+
+    $extended = communityPostsExtendedSchemaAvailable($pdo);
+
+    $columns = 'SELECT p.id, p.user_id, p.content, p.content_type, p.media_url, p.created_at, u.username, u.badge';
+    if ($extended) {
+        $columns = 'SELECT p.id, p.user_id, p.content, p.content_type, p.media_url, p.created_at, p.published_at, u.username, u.badge';
+    }
+
+    $sql = $columns . ' FROM community_posts p INNER JOIN users u ON u.id = p.user_id WHERE p.id = :id LIMIT 1';
+
+    try {
+        $statement = $pdo->prepare($sql);
+        $statement->execute(['id' => $postId]);
+        $row = $statement->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        $createdAt = normalizeToTimestamp($row['created_at'] ?? time());
+        $publishedAt = $extended
+            ? normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time()))
+            : $createdAt;
+
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'user_id' => (int) ($row['user_id'] ?? 0),
+            'content' => $row['content'] ?? '',
+            'content_type' => $row['content_type'] ?? 'text',
+            'media_url' => $row['media_url'] ?? '',
+            'created_at' => $createdAt,
+            'published_at' => $publishedAt,
+            'author' => $row['username'] ?? 'Tifoso',
+            'badge' => $row['badge'] ?? 'Tifoso',
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community post for notification: ' . $exception->getMessage());
+    }
+
+    return null;
+}
+
+function truncateForNotification(string $text, int $limit = 140): string
+{
+    $trimmed = trim($text);
+
+    if ($trimmed === '') {
+        return '';
+    }
+
+    if (mb_strlen($trimmed) <= $limit) {
+        return $trimmed;
+    }
+
+    return rtrim(mb_substr($trimmed, 0, max(1, $limit - 1))) . '…';
+}
+
+function buildCommunityPostNotificationPayload(array $post): ?array
+{
+    global $baseUrl;
+
+    $author = $post['author'] ?? 'Membro';
+    $title = 'Nuovo post di ' . $author;
+
+    $excerpt = sanitizeFeedBody($post['content'] ?? '');
+    $body = truncateForNotification($excerpt !== '' ? $excerpt : 'Ha pubblicato un nuovo aggiornamento nella community.');
+
+    $relativeUrl = '?page=community#post-' . $post['id'];
+    $url = $baseUrl !== '' ? rtrim($baseUrl, '/') . '/' . ltrim($relativeUrl, '/') : $relativeUrl;
+
+    $payload = [
+        'title' => $title,
+        'body' => $body,
+        'tag' => 'community-post-' . $post['id'],
+        'data' => [
+            'url' => $url,
+            'post_id' => $post['id'],
+            'author' => $author,
+        ],
+    ];
+
+    $iconPath = trim((string) env('PUSH_ICON_PATH', ''));
+    if ($iconPath !== '') {
+        $resolvedIcon = $baseUrl !== '' ? rtrim($baseUrl, '/') . '/' . ltrim($iconPath, '/') : $iconPath;
+        $payload['icon'] = $resolvedIcon;
+        $payload['badge'] = $resolvedIcon;
+    }
+
+    return $payload;
+}
+
+function notifyCommunityPostPublished(int $postId): void
+{
+    if (!isWebPushConfigured()) {
+        return;
+    }
+
+    $post = findCommunityPostForNotification($postId);
+    if (!$post || $post['user_id'] <= 0) {
+        return;
+    }
+
+    $subscriptions = getPushSubscriptionsForPost($post['user_id']);
+    if (empty($subscriptions)) {
+        return;
+    }
+
+    $payload = buildCommunityPostNotificationPayload($post);
+    if (!is_array($payload)) {
+        return;
+    }
+
+    $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE);
+    if (!is_string($payloadJson)) {
+        return;
+    }
+
+    $webPush = getWebPushClient();
+    if (!$webPush) {
+        return;
+    }
+
+    $subscriptionMap = [];
+
+    $subscriptionClass = 'Minishlink\\WebPush\\Subscription';
+    if (!class_exists($subscriptionClass)) {
+        return;
+    }
+
+    $queueMethod = method_exists($webPush, 'queueNotification') ? 'queueNotification' : (method_exists($webPush, 'sendNotification') ? 'sendNotification' : null);
+    if ($queueMethod === null) {
+        return;
+    }
+
+    foreach ($subscriptions as $subscription) {
+        if ($subscription['endpoint'] === '') {
+            continue;
+        }
+
+        $subscriptionMap[$subscription['endpoint']] = $subscription['id'];
+
+        try {
+            $subscriptionObject = $subscriptionClass::create([
+                'endpoint' => $subscription['endpoint'],
+                'publicKey' => $subscription['public_key'],
+                'authToken' => $subscription['auth_token'],
+                'contentEncoding' => $subscription['content_encoding'] ?: 'aes128gcm',
+            ]);
+
+            $webPush->{$queueMethod}($subscriptionObject, $payloadJson);
+        } catch (\Throwable $exception) {
+            error_log('[BianconeriHub] Failed to queue push notification: ' . $exception->getMessage());
+        }
+    }
+
+    foreach ($webPush->flush() as $report) {
+        $endpoint = $report->getEndpoint();
+
+        if ($report->isSubscriptionExpired() && isset($subscriptionMap[$endpoint])) {
+            removePushSubscriptionById($subscriptionMap[$endpoint]);
+        }
+
+        if (!$report->isSuccess()) {
+            error_log('[BianconeriHub] Push notification delivery failed: ' . $report->getReason());
+        }
+    }
+}
+
 function publishDueCommunityPosts(): void
 {
     $pdo = getDatabaseConnection();
@@ -1358,10 +1841,43 @@ function publishDueCommunityPosts(): void
         return;
     }
 
+    $postIds = [];
+
     try {
-        $pdo->exec('UPDATE community_posts SET status = "published", published_at = NOW(), scheduled_for = NULL WHERE status = "scheduled" AND scheduled_for IS NOT NULL AND scheduled_for <= NOW()');
+        $pdo->beginTransaction();
+
+        $candidates = $pdo->prepare('SELECT id FROM community_posts WHERE status = "scheduled" AND scheduled_for IS NOT NULL AND scheduled_for <= NOW() FOR UPDATE');
+        $candidates->execute();
+
+        foreach ($candidates as $row) {
+            $id = (int) ($row['id'] ?? 0);
+            if ($id > 0) {
+                $postIds[] = $id;
+            }
+        }
+
+        if (empty($postIds)) {
+            $pdo->commit();
+            return;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($postIds), '?'));
+        $update = $pdo->prepare('UPDATE community_posts SET status = "published", published_at = NOW(), scheduled_for = NULL WHERE id IN (' . $placeholders . ')');
+        $update->execute($postIds);
+
+        $pdo->commit();
     } catch (PDOException $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
         error_log('[BianconeriHub] Failed to publish scheduled community posts: ' . $exception->getMessage());
+
+        return;
+    }
+
+    foreach ($postIds as $postId) {
+        notifyCommunityPostPublished($postId);
     }
 }
 
@@ -2561,6 +3077,14 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         ]);
 
         $pdo->commit();
+
+        if ($status === 'published') {
+            try {
+                notifyCommunityPostPublished($postId);
+            } catch (\Throwable $exception) {
+                error_log('[BianconeriHub] Failed to dispatch push notifications for post ' . $postId . ': ' . $exception->getMessage());
+            }
+        }
 
         return [
             'success' => true,

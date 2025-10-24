@@ -557,13 +557,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const feedList = feedContainer.querySelector('[data-community-feed-list]');
         const loadMoreButton = feedContainer.querySelector('[data-community-load-more]');
         const statusLabel = feedContainer.querySelector('[data-community-feed-status]');
-    const sentinel = feedContainer.querySelector('[data-community-feed-sentinel]');
+        const sentinel = feedContainer.querySelector('[data-community-feed-sentinel]');
         const endpoint = feedContainer.dataset.feedEndpoint || '';
         const pageSize = parseInt(feedContainer.dataset.feedPageSize || '8', 10);
         let offset = parseInt(feedContainer.dataset.feedOffset || '0', 10);
         let hasMore = feedContainer.dataset.feedHasMore === '1';
         let isLoading = false;
-    let sentinelObserver = null;
+        let sentinelObserver = null;
 
         const updateControlsVisibility = () => {
             if (loadMoreButton) {
@@ -685,5 +685,310 @@ document.addEventListener('DOMContentLoaded', () => {
 
             sentinelObserver.observe(sentinel);
         }
+    }
+
+    const pushSetupContainer = document.querySelector('[data-push-setup]');
+    if (pushSetupContainer) {
+        initPushModule(pushSetupContainer);
+    }
+
+    function initPushModule(container) {
+        const endpoint = container.dataset.pushEndpoint || '';
+        const publicKey = container.dataset.pushPublicKey || '';
+        const csrfToken = container.dataset.pushToken || '';
+        const enableButton = container.querySelector('[data-push-enable]');
+        const disableButton = container.querySelector('[data-push-disable]');
+        const scopeInputs = Array.from(container.querySelectorAll('input[name="push-scope"]'));
+        const statusLabel = container.querySelector('[data-push-status]');
+        const unsupportedLabel = container.querySelector('[data-push-unsupported]');
+        const localScopeKey = 'bhPushScope';
+        const localEnabledKey = 'bhPushEnabled';
+        let registration = null;
+        let currentSubscription = null;
+        let isProcessing = false;
+
+        const setStatus = (message) => {
+            if (!statusLabel) {
+                return;
+            }
+            statusLabel.textContent = message || '';
+            statusLabel.classList.toggle('hidden', !message);
+        };
+
+        const toggleButtons = (enabled) => {
+            if (enableButton) {
+                enableButton.classList.toggle('hidden', enabled);
+                enableButton.disabled = enabled;
+            }
+            if (disableButton) {
+                disableButton.classList.toggle('hidden', !enabled);
+                disableButton.disabled = !enabled;
+            }
+        };
+
+        const storeState = (enabled, scope) => {
+            try {
+                if (enabled) {
+                    window.localStorage.setItem(localEnabledKey, '1');
+                    if (scope) {
+                        window.localStorage.setItem(localScopeKey, scope);
+                    }
+                } else {
+                    window.localStorage.removeItem(localEnabledKey);
+                }
+            } catch (error) {
+                // Silently ignore storage issues.
+            }
+        };
+
+        const loadStoredScope = () => {
+            try {
+                return window.localStorage.getItem(localScopeKey) || 'global';
+            } catch (error) {
+                return 'global';
+            }
+        };
+
+        const getSelectedScope = () => {
+            const active = scopeInputs.find((input) => input.checked);
+            return active ? active.value : 'global';
+        };
+
+        const applyStoredScope = () => {
+            const stored = loadStoredScope();
+            let matched = false;
+            scopeInputs.forEach((input) => {
+                if (input.value === stored) {
+                    input.checked = true;
+                    matched = true;
+                }
+            });
+            if (!matched && scopeInputs.length > 0) {
+                scopeInputs[0].checked = true;
+            }
+        };
+
+        const getRegistration = async () => {
+            if (registration) {
+                return registration;
+            }
+
+            try {
+                const existing = await navigator.serviceWorker.getRegistration();
+                if (existing) {
+                    registration = existing;
+                } else {
+                    registration = await navigator.serviceWorker.register('/service-worker.js');
+                }
+                const ready = await navigator.serviceWorker.ready;
+                registration = ready;
+                return ready;
+            } catch (error) {
+                registration = null;
+                throw error;
+            }
+        };
+
+        const getSubscription = async () => {
+            const reg = await getRegistration();
+            return reg.pushManager.getSubscription();
+        };
+
+        const sendRequest = async (action, body) => {
+            if (!endpoint) {
+                throw new Error('Endpoint non configurato.');
+            }
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                body: JSON.stringify({
+                    action,
+                    token: csrfToken,
+                    ...body,
+                }),
+            });
+
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (error) {
+                payload = {};
+            }
+
+            if (!response.ok || !payload.success) {
+                throw new Error(payload.message || 'Richiesta notifiche non riuscita.');
+            }
+
+            return payload;
+        };
+
+        const subscribe = async (updateOnly = false) => {
+            if (isProcessing) {
+                return;
+            }
+
+            if (!publicKey && !updateOnly) {
+                setStatus('Chiave pubblica VAPID non configurata.');
+                return;
+            }
+
+            isProcessing = true;
+            setStatus(updateOnly ? 'Aggiornamento preferenze…' : 'Attivazione notifiche…');
+
+            try {
+                const reg = await getRegistration();
+                let subscription = await reg.pushManager.getSubscription();
+
+                if (!subscription) {
+                    if (updateOnly) {
+                        setStatus('Non ci sono notifiche attive su questo dispositivo.');
+                        toggleButtons(false);
+                        storeState(false);
+                        return;
+                    }
+
+                    const keyBuffer = urlBase64ToUint8Array(publicKey);
+                    subscription = await reg.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: keyBuffer,
+                    });
+                }
+
+                const scope = getSelectedScope();
+                const response = await sendRequest(updateOnly ? 'update' : 'subscribe', {
+                    scope,
+                    subscription: subscription ? subscription.toJSON() : null,
+                    meta: {
+                        user_agent: navigator.userAgent.slice(0, 250),
+                        language: navigator.language || '',
+                        content_encoding: 'aes128gcm',
+                    },
+                });
+
+                currentSubscription = subscription;
+                storeState(true, scope);
+                toggleButtons(true);
+                setStatus(response.message || (updateOnly ? 'Preferenze aggiornate.' : 'Notifiche attivate.'));
+            } catch (error) {
+                console.error('Push subscription error:', error);
+                setStatus(error.message || 'Impossibile completare la richiesta.');
+                if (!updateOnly) {
+                    toggleButtons(false);
+                }
+            } finally {
+                isProcessing = false;
+            }
+        };
+
+        const unsubscribe = async () => {
+            if (isProcessing) {
+                return;
+            }
+
+            isProcessing = true;
+            setStatus('Disattivazione notifiche…');
+
+            try {
+                const subscription = await getSubscription();
+                if (!subscription) {
+                    toggleButtons(false);
+                    storeState(false);
+                    setStatus('Notifiche già disattivate.');
+                    return;
+                }
+
+                try {
+                    await sendRequest('unsubscribe', {
+                        endpoint: subscription.endpoint,
+                        subscription: subscription.toJSON(),
+                    });
+                } catch (error) {
+                    console.warn('Errore durante la deregistrazione dal server:', error);
+                }
+
+                await subscription.unsubscribe();
+                currentSubscription = null;
+                toggleButtons(false);
+                storeState(false);
+                setStatus('Notifiche disattivate.');
+            } catch (error) {
+                console.error('Push unsubscribe error:', error);
+                setStatus(error.message || 'Impossibile disattivare le notifiche.');
+            } finally {
+                isProcessing = false;
+            }
+        };
+
+        const initialise = async () => {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                if (enableButton) {
+                    enableButton.disabled = true;
+                }
+                if (unsupportedLabel) {
+                    unsupportedLabel.classList.remove('hidden');
+                }
+                setStatus('Il browser non supporta le notifiche push.');
+                return;
+            }
+
+            applyStoredScope();
+
+            try {
+                const subscription = await getSubscription();
+                currentSubscription = subscription;
+                const enabled = Boolean(subscription);
+                toggleButtons(enabled);
+                if (enabled) {
+                    setStatus('');
+                } else {
+                    storeState(false);
+                }
+            } catch (error) {
+                console.error('Push init error:', error);
+                setStatus('Impossibile inizializzare le notifiche.');
+                toggleButtons(false);
+            }
+        };
+
+        if (enableButton) {
+            enableButton.addEventListener('click', () => {
+                subscribe(false);
+            });
+        }
+
+        if (disableButton) {
+            disableButton.addEventListener('click', () => {
+                unsubscribe();
+            });
+        }
+
+        scopeInputs.forEach((input) => {
+            input.addEventListener('change', () => {
+                if (!input.checked) {
+                    return;
+                }
+                if (currentSubscription) {
+                    subscribe(true);
+                }
+            });
+        });
+
+        initialise();
+    }
+
+    function urlBase64ToUint8Array(base64String) {
+        const sanitized = (base64String || '').replace(/\s+/g, '');
+        const padding = '='.repeat((4 - (sanitized.length % 4)) % 4);
+        const base64 = (sanitized + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let index = 0; index < rawData.length; index += 1) {
+            outputArray[index] = rawData.charCodeAt(index);
+        }
+        return outputArray;
     }
 });

@@ -85,6 +85,50 @@ CREATE TABLE `community_posts` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- Table: community_followers
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `community_followers`;
+CREATE TABLE `community_followers` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `user_id` INT UNSIGNED NOT NULL,
+    `follower_id` INT UNSIGNED NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `community_followers_unique` (`user_id`, `follower_id`),
+    KEY `community_followers_follower_id_foreign` (`follower_id`),
+    CONSTRAINT `community_followers_user_id_foreign`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `community_followers_follower_id_foreign`
+        FOREIGN KEY (`follower_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Table: user_push_subscriptions
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `user_push_subscriptions`;
+CREATE TABLE `user_push_subscriptions` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `user_id` INT UNSIGNED NOT NULL,
+    `endpoint` VARCHAR(500) NOT NULL,
+    `public_key` VARCHAR(255) NOT NULL,
+    `auth_token` VARCHAR(255) NOT NULL,
+    `content_encoding` VARCHAR(40) DEFAULT 'aes128gcm',
+    `device_name` VARCHAR(120) DEFAULT NULL,
+    `user_agent` VARCHAR(255) DEFAULT NULL,
+    `scope` ENUM('global', 'following') NOT NULL DEFAULT 'global',
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `user_push_subscriptions_endpoint_unique` (`endpoint`(191)),
+    KEY `user_push_subscriptions_user_id_foreign` (`user_id`),
+    CONSTRAINT `user_push_subscriptions_user_id_foreign`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- Seed data (optional)
 -- ---------------------------------------------------------------------------
 INSERT INTO `users` (`username`, `email`, `password_hash`, `badge`) VALUES
