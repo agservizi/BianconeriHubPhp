@@ -1683,7 +1683,6 @@ function getCommunityPosts(): array
 
     if ($extendedSchema) {
         $sql .= ' WHERE (p.status = "published" OR p.status IS NULL OR p.status = "")
-                   AND (p.published_at IS NULL OR p.published_at <= NOW())
                    ORDER BY p.published_at DESC, p.created_at DESC';
     } else {
         $sql .= ' ORDER BY p.created_at DESC';
