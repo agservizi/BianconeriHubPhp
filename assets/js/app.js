@@ -1,4 +1,50 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Handle mobile navigation toggle to keep menu accessible on small screens.
+    const mobileNavToggle = document.querySelector('[data-mobile-nav-toggle]');
+    const mobileNavPanel = document.querySelector('[data-mobile-nav-panel]');
+    if (mobileNavToggle && mobileNavPanel) {
+        const menuIcons = mobileNavToggle.querySelectorAll('[data-menu-icon]');
+        const body = document.body;
+        const setExpanded = (expanded) => {
+            mobileNavToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            mobileNavPanel.classList.toggle('hidden', !expanded);
+            body.classList.toggle('overflow-hidden', expanded);
+            menuIcons.forEach((icon) => {
+                const isOpenIcon = icon.dataset.menuIcon === 'open';
+                icon.classList.toggle('hidden', expanded ? isOpenIcon : !isOpenIcon);
+            });
+        };
+
+        setExpanded(false);
+
+        mobileNavToggle.addEventListener('click', () => {
+            const isExpanded = mobileNavToggle.getAttribute('aria-expanded') === 'true';
+            setExpanded(!isExpanded);
+        });
+
+        mobileNavPanel.querySelectorAll('a').forEach((link) => {
+            link.addEventListener('click', () => setExpanded(false));
+        });
+
+        const mdQuery = window.matchMedia('(min-width: 768px)');
+        const handleViewportChange = (event) => {
+            if (event.matches) {
+                setExpanded(false);
+            }
+        };
+        if (typeof mdQuery.addEventListener === 'function') {
+            mdQuery.addEventListener('change', handleViewportChange);
+        } else if (typeof mdQuery.addListener === 'function') {
+            mdQuery.addListener(handleViewportChange);
+        }
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                setExpanded(false);
+            }
+        });
+    }
+
     const navItems = document.querySelectorAll('[data-nav-target]');
     const currentPage = document.body.dataset.currentPage;
 
