@@ -788,6 +788,7 @@ $availablePages = [
     'news_article' => __DIR__ . '/pages/news_article.php',
     'partite' => __DIR__ . '/pages/partite.php',
     'community' => __DIR__ . '/pages/community.php',
+    'profile' => __DIR__ . '/pages/profile.php',
     'login' => __DIR__ . '/pages/login.php',
     'register' => __DIR__ . '/pages/register.php',
 ];
@@ -798,6 +799,7 @@ $pageTitles = [
     'news_article' => 'Notizia',
     'partite' => 'Partite',
     'community' => 'Community',
+    'profile' => 'Profilo',
     'login' => 'Accedi',
     'register' => 'Registrati',
 ];
@@ -858,7 +860,7 @@ function getNavigationItems(): array
         'home' => ['label' => 'Home', 'icon' => 'M3 9.75 12 3l9 6.75V20a1 1 0 0 1-1 1h-5.25a.75.75 0 0 1-.75-.75v-4.5a.75.75 0 0 0-.75-.75H11.7a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 1-.75.75H5a1 1 0 0 1-1-1z'],
         'news' => ['label' => 'News', 'icon' => 'M4.5 6.75h15M4.5 12h15m-15 5.25h9.75'],
         'community' => ['label' => 'Community', 'icon' => 'M9 7.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm12 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM4.5 15a4.5 4.5 0 0 1 9 0v3a.75.75 0 0 1-.75.75h-7.5A.75.75 0 0 1 4.5 18v-3Zm12 0a4.5 4.5 0 0 1 6 4.031v1.219a.75.75 0 0 1-.75.75h-7.5a.75.75 0 0 1-.75-.75V19.03A4.5 4.5 0 0 1 16.5 15Z'],
-        'login' => ['label' => 'Profilo', 'icon' => 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.25a7.5 7.5 0 0 1 15 0 .75.75 0 0 1-.75.75h-13.5a.75.75 0 0 1-.75-.75Z'],
+        'profile' => ['label' => 'Profilo', 'icon' => 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.25a7.5 7.5 0 0 1 15 0 .75.75 0 0 1-.75.75h-13.5a.75.75 0 0 1-.75-.75Z'],
     ];
 }
 
@@ -987,6 +989,219 @@ function getRegisteredUsers(): array
     }
 
     return [];
+}
+
+function findUserById(int $userId): ?array
+{
+    $userId = $userId > 0 ? $userId : 0;
+    if ($userId <= 0) {
+        return null;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return null;
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT id, username, email, badge, avatar_url, created_at, updated_at FROM users WHERE id = :id LIMIT 1');
+        $statement->execute(['id' => $userId]);
+        $row = $statement->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'username' => $row['username'] ?? '',
+            'email' => $row['email'] ?? '',
+            'badge' => $row['badge'] ?? 'Tifoso',
+            'avatar_url' => $row['avatar_url'] ?? null,
+            'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+            'updated_at' => isset($row['updated_at']) ? normalizeToTimestamp($row['updated_at']) : null,
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to find user by id: ' . $exception->getMessage());
+    }
+
+    return null;
+}
+
+function getUserProfileSummary(int $userId): array
+{
+    $summary = [
+        'counts' => [
+            'posts_total' => 0,
+            'posts_published' => 0,
+            'posts_scheduled' => 0,
+            'posts_draft' => 0,
+            'polls_created' => 0,
+            'comments_written' => 0,
+            'news_comments_written' => 0,
+            'reactions_left' => 0,
+            'reactions_left_breakdown' => ['like' => 0, 'support' => 0],
+            'reactions_received' => 0,
+            'reactions_received_breakdown' => ['like' => 0, 'support' => 0],
+            'news_likes' => 0,
+        ],
+        'recent_posts' => [],
+        'scheduled_posts' => [],
+        'draft_posts' => [],
+        'recent_comments' => [],
+        'recent_news_comments' => [],
+        'recent_news_likes' => [],
+    ];
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return $summary;
+    }
+
+    try {
+        $postsStatement = $pdo->prepare(
+            'SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = "published" THEN 1 ELSE 0 END) AS published,
+                SUM(CASE WHEN status = "scheduled" THEN 1 ELSE 0 END) AS scheduled,
+                SUM(CASE WHEN status = "draft" THEN 1 ELSE 0 END) AS drafts,
+                SUM(CASE WHEN content_type = "poll" THEN 1 ELSE 0 END) AS polls
+             FROM community_posts
+             WHERE user_id = :user_id'
+        );
+        $postsStatement->execute(['user_id' => $userId]);
+        $postCounts = $postsStatement->fetch() ?: [];
+
+        $summary['counts']['posts_total'] = (int) ($postCounts['total'] ?? 0);
+        $summary['counts']['posts_published'] = (int) ($postCounts['published'] ?? 0);
+        $summary['counts']['posts_scheduled'] = (int) ($postCounts['scheduled'] ?? 0);
+        $summary['counts']['posts_draft'] = (int) ($postCounts['drafts'] ?? 0);
+        $summary['counts']['polls_created'] = (int) ($postCounts['polls'] ?? 0);
+
+        $commentsStatement = $pdo->prepare('SELECT COUNT(*) AS total FROM community_post_comments WHERE user_id = :user_id');
+        $commentsStatement->execute(['user_id' => $userId]);
+        $summary['counts']['comments_written'] = (int) ($commentsStatement->fetchColumn() ?: 0);
+
+        $newsCommentsStatement = $pdo->prepare('SELECT COUNT(*) AS total FROM news_comments WHERE user_id = :user_id');
+        $newsCommentsStatement->execute(['user_id' => $userId]);
+        $summary['counts']['news_comments_written'] = (int) ($newsCommentsStatement->fetchColumn() ?: 0);
+
+        $reactionsLeftStatement = $pdo->prepare('SELECT reaction_type, COUNT(*) AS total FROM community_post_reactions WHERE user_id = :user_id GROUP BY reaction_type');
+        $reactionsLeftStatement->execute(['user_id' => $userId]);
+        $reactionsLeftTotal = 0;
+        foreach ($reactionsLeftStatement as $row) {
+            $type = (string) ($row['reaction_type'] ?? 'like');
+            $count = (int) ($row['total'] ?? 0);
+            if (isset($summary['counts']['reactions_left_breakdown'][$type])) {
+                $summary['counts']['reactions_left_breakdown'][$type] = $count;
+            }
+            $reactionsLeftTotal += $count;
+        }
+        $summary['counts']['reactions_left'] = $reactionsLeftTotal;
+
+        $reactionsReceivedStatement = $pdo->prepare(
+            'SELECT r.reaction_type, COUNT(*) AS total
+             FROM community_post_reactions r
+             INNER JOIN community_posts p ON p.id = r.post_id
+             WHERE p.user_id = :user_id
+             GROUP BY r.reaction_type'
+        );
+        $reactionsReceivedStatement->execute(['user_id' => $userId]);
+        $reactionsReceivedTotal = 0;
+        foreach ($reactionsReceivedStatement as $row) {
+            $type = (string) ($row['reaction_type'] ?? 'like');
+            $count = (int) ($row['total'] ?? 0);
+            if (isset($summary['counts']['reactions_received_breakdown'][$type])) {
+                $summary['counts']['reactions_received_breakdown'][$type] = $count;
+            }
+            $reactionsReceivedTotal += $count;
+        }
+        $summary['counts']['reactions_received'] = $reactionsReceivedTotal;
+
+        $newsLikesStatement = $pdo->prepare('SELECT COUNT(*) AS total FROM news_likes WHERE user_id = :user_id');
+        $newsLikesStatement->execute(['user_id' => $userId]);
+        $summary['counts']['news_likes'] = (int) ($newsLikesStatement->fetchColumn() ?: 0);
+
+        $recentPostsStatement = $pdo->prepare('SELECT id, content, content_type, status, poll_question, published_at, scheduled_for, created_at, updated_at FROM community_posts WHERE user_id = :user_id ORDER BY created_at DESC LIMIT 5');
+        $recentPostsStatement->execute(['user_id' => $userId]);
+        foreach ($recentPostsStatement as $row) {
+            $summary['recent_posts'][] = [
+                'id' => (int) ($row['id'] ?? 0),
+                'content' => $row['content'] ?? '',
+                'content_type' => $row['content_type'] ?? 'text',
+                'status' => $row['status'] ?? 'published',
+                'poll_question' => $row['poll_question'] ?? '',
+                'published_at' => normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time())),
+                'scheduled_for' => isset($row['scheduled_for']) ? normalizeToTimestamp($row['scheduled_for']) : null,
+                'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+                'updated_at' => isset($row['updated_at']) ? normalizeToTimestamp($row['updated_at']) : null,
+            ];
+        }
+
+        $scheduledStatement = $pdo->prepare('SELECT id, content, content_type, scheduled_for, created_at FROM community_posts WHERE user_id = :user_id AND status = "scheduled" ORDER BY scheduled_for ASC LIMIT 5');
+        $scheduledStatement->execute(['user_id' => $userId]);
+        foreach ($scheduledStatement as $row) {
+            $summary['scheduled_posts'][] = [
+                'id' => (int) ($row['id'] ?? 0),
+                'content' => $row['content'] ?? '',
+                'content_type' => $row['content_type'] ?? 'text',
+                'scheduled_for' => isset($row['scheduled_for']) ? normalizeToTimestamp($row['scheduled_for']) : null,
+                'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+            ];
+        }
+
+        $draftsStatement = $pdo->prepare('SELECT id, content, content_type, updated_at, created_at FROM community_posts WHERE user_id = :user_id AND status = "draft" ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 5');
+        $draftsStatement->execute(['user_id' => $userId]);
+        foreach ($draftsStatement as $row) {
+            $summary['draft_posts'][] = [
+                'id' => (int) ($row['id'] ?? 0),
+                'content' => $row['content'] ?? '',
+                'content_type' => $row['content_type'] ?? 'text',
+                'updated_at' => isset($row['updated_at']) ? normalizeToTimestamp($row['updated_at']) : null,
+                'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+            ];
+        }
+
+        $communityCommentsStatement = $pdo->prepare('SELECT c.id, c.content, c.created_at, c.post_id, p.content AS post_content FROM community_post_comments c INNER JOIN community_posts p ON p.id = c.post_id WHERE c.user_id = :user_id ORDER BY c.created_at DESC LIMIT 5');
+        $communityCommentsStatement->execute(['user_id' => $userId]);
+        foreach ($communityCommentsStatement as $row) {
+            $summary['recent_comments'][] = [
+                'id' => (int) ($row['id'] ?? 0),
+                'content' => $row['content'] ?? '',
+                'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+                'post_id' => (int) ($row['post_id'] ?? 0),
+                'post_content' => $row['post_content'] ?? '',
+            ];
+        }
+
+        $newsCommentsRecentStatement = $pdo->prepare('SELECT c.id, c.content, c.created_at, n.id AS news_id, n.title, n.slug FROM news_comments c INNER JOIN news n ON n.id = c.news_id WHERE c.user_id = :user_id ORDER BY c.created_at DESC LIMIT 5');
+        $newsCommentsRecentStatement->execute(['user_id' => $userId]);
+        foreach ($newsCommentsRecentStatement as $row) {
+            $summary['recent_news_comments'][] = [
+                'id' => (int) ($row['id'] ?? 0),
+                'content' => $row['content'] ?? '',
+                'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+                'news_id' => (int) ($row['news_id'] ?? 0),
+                'news_title' => $row['title'] ?? '',
+                'news_slug' => $row['slug'] ?? '',
+            ];
+        }
+
+        $newsLikesRecentStatement = $pdo->prepare('SELECT nl.news_id, nl.created_at, n.title, n.slug FROM news_likes nl INNER JOIN news n ON n.id = nl.news_id WHERE nl.user_id = :user_id ORDER BY nl.created_at DESC LIMIT 5');
+        $newsLikesRecentStatement->execute(['user_id' => $userId]);
+        foreach ($newsLikesRecentStatement as $row) {
+            $summary['recent_news_likes'][] = [
+                'news_id' => (int) ($row['news_id'] ?? 0),
+                'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+                'news_title' => $row['title'] ?? '',
+                'news_slug' => $row['slug'] ?? '',
+            ];
+        }
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to build user profile summary: ' . $exception->getMessage());
+    }
+
+    return $summary;
 }
 
 function findUserByUsername(string $username): ?array

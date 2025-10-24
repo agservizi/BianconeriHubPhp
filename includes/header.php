@@ -37,6 +37,7 @@ $pageDescriptions = [
     'news_article' => 'Rivivi l’articolo con commenti della community e approfondimenti dedicati ai bianconeri.',
     'partite' => 'Calendario sempre aggiornato con orari, stadio, dirette TV e reminder per non perdere nemmeno un fischio.',
     'community' => 'La curva digitale dove la voce dei tifosi diventa racconto, idee e cori a sostegno della Vecchia Signora.',
+    'profile' => 'Gestisci il tuo account, consulta le statistiche personali e ripercorri il tuo contributo alla community bianconera.',
     'login' => 'Accedi alla tua area riservata per gestire profilo, badge e partecipare alle discussioni in diretta.',
     'register' => 'Iscriviti per ottenere badge esclusivi, contenuti extra e vivere l’esperienza BianconeriHub completa.',
 ];
@@ -129,17 +130,30 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                     <nav class="w-full md:w-auto">
                         <ul class="flex flex-wrap items-center gap-3 text-sm font-medium">
                             <?php foreach ($topNavItems as $pageKey => $item) {
+                                $linkLabel = $item['label'];
+                                $linkHref = '?page=' . $pageKey;
+
+                                if ($pageKey === 'profile') {
+                                    if ($loggedUser) {
+                                        $linkLabel = 'Profilo';
+                                        $linkHref = '?page=profile';
+                                    } else {
+                                        $linkLabel = 'Accedi';
+                                        $linkHref = '?page=login';
+                                    }
+                                }
+
                                 $isActive = isset($currentPage) && $currentPage === $pageKey;
                                 $linkClasses = $isActive
                                     ? 'inline-flex items-center gap-2 rounded-full bg-white text-black px-4 py-2 shadow-lg'
                                     : 'inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-gray-300 hover:border-white/40 hover:text-white transition-all';
                             ?>
                                 <li>
-                                    <a href="?page=<?php echo $pageKey; ?>" class="<?php echo $linkClasses; ?>" data-nav-target="<?php echo $pageKey; ?>">
+                                    <a href="<?php echo $linkHref; ?>" class="<?php echo $linkClasses; ?>" data-nav-target="<?php echo $pageKey; ?>">
                                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                             <path d="<?php echo $item['icon']; ?>" />
                                         </svg>
-                                        <?php echo htmlspecialchars($item['label'], ENT_QUOTES, 'UTF-8'); ?>
+                                        <?php echo htmlspecialchars($linkLabel, ENT_QUOTES, 'UTF-8'); ?>
                                     </a>
                                 </li>
                             <?php } ?>
@@ -150,19 +164,32 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                     <nav>
                         <ul class="flex flex-col gap-2 text-sm font-medium">
                             <?php foreach ($topNavItems as $pageKey => $item) {
+                                $linkLabel = $item['label'];
+                                $linkHref = '?page=' . $pageKey;
+
+                                if ($pageKey === 'profile') {
+                                    if ($loggedUser) {
+                                        $linkLabel = 'Profilo';
+                                        $linkHref = '?page=profile';
+                                    } else {
+                                        $linkLabel = 'Accedi';
+                                        $linkHref = '?page=login';
+                                    }
+                                }
+
                                 $isActive = isset($currentPage) && $currentPage === $pageKey;
                                 $linkClasses = $isActive
                                     ? 'flex items-center gap-3 rounded-xl bg-white/15 px-4 py-2 text-white shadow-inner'
                                     : 'flex items-center gap-3 rounded-xl px-4 py-2 text-gray-300 transition-all hover:bg-white/10 hover:text-white';
                             ?>
                                 <li>
-                                    <a href="?page=<?php echo $pageKey; ?>" class="<?php echo $linkClasses; ?>" data-nav-target="<?php echo $pageKey; ?>">
+                                    <a href="<?php echo $linkHref; ?>" class="<?php echo $linkClasses; ?>" data-nav-target="<?php echo $pageKey; ?>">
                                         <span class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-black/40">
                                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                                 <path d="<?php echo $item['icon']; ?>" />
                                             </svg>
                                         </span>
-                                        <span class="font-semibold"><?php echo htmlspecialchars($item['label'], ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <span class="font-semibold"><?php echo htmlspecialchars($linkLabel, ENT_QUOTES, 'UTF-8'); ?></span>
                                     </a>
                                 </li>
                             <?php } ?>

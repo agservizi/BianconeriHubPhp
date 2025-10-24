@@ -3,10 +3,8 @@ $currentPage = $currentPage ?? 'home';
 $navItems = getNavigationItems();
 $isAuthenticated = isUserLoggedIn();
 
-if ($isAuthenticated) {
-    $navItems['login']['label'] = 'Profilo';
-} else {
-    $navItems['login']['label'] = 'Login';
+if (isset($navItems['profile'])) {
+    $navItems['profile']['label'] = $isAuthenticated ? 'Profilo' : 'Accedi';
 }
 ?>
 <!-- Barra di navigazione mobile disattivata -->
