@@ -1619,7 +1619,7 @@ function getCommunityPostForEditing(int $postId, int $userId): ?array
     return null;
 }
 
-function getCommunityPosts(): array
+function getCommunityPosts(int $offset = 0, int $limit = 20): array
 {
     publishDueCommunityPosts();
 
@@ -1627,6 +1627,9 @@ function getCommunityPosts(): array
     if (!$pdo) {
         return [];
     }
+
+    $offset = max(0, $offset);
+    $limit = max(1, min($limit, 50));
 
     $extendedSchema = communityPostsExtendedSchemaAvailable($pdo);
     $currentUser = getLoggedInUser();
@@ -1688,6 +1691,8 @@ function getCommunityPosts(): array
         $sql .= ' ORDER BY p.created_at DESC';
     }
 
+    $sql .= ' LIMIT ' . $limit . ' OFFSET ' . $offset;
+
     try {
         $statement = $pdo->prepare($sql);
         if ($currentUserId > 0) {
@@ -1731,6 +1736,7 @@ function getCommunityPosts(): array
                 'published_at' => $extendedSchema
                     ? normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time()))
                     : normalizeToTimestamp($row['created_at'] ?? time()),
+                'status' => $extendedSchema ? ($row['status'] ?? 'published') : 'published',
                 'likes_count' => (int) ($row['likes_count'] ?? 0),
                 'supports_count' => (int) ($row['supports_count'] ?? 0),
                 'comments_count' => (int) ($row['comments_count'] ?? 0),
@@ -1747,7 +1753,7 @@ function getCommunityPosts(): array
             return $post['id'];
         }, $rawPosts);
 
-    $mediaMap = getCommunityPostMedia($postIds);
+        $mediaMap = getCommunityPostMedia($postIds);
 
         $allMentions = [];
         foreach ($rawPosts as $post) {

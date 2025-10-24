@@ -551,4 +551,139 @@ document.addEventListener('DOMContentLoaded', () => {
 
         refreshPhotoPreview();
     }
+
+    const feedContainer = document.querySelector('[data-community-feed]');
+    if (feedContainer) {
+        const feedList = feedContainer.querySelector('[data-community-feed-list]');
+        const loadMoreButton = feedContainer.querySelector('[data-community-load-more]');
+        const statusLabel = feedContainer.querySelector('[data-community-feed-status]');
+    const sentinel = feedContainer.querySelector('[data-community-feed-sentinel]');
+        const endpoint = feedContainer.dataset.feedEndpoint || '';
+        const pageSize = parseInt(feedContainer.dataset.feedPageSize || '8', 10);
+        let offset = parseInt(feedContainer.dataset.feedOffset || '0', 10);
+        let hasMore = feedContainer.dataset.feedHasMore === '1';
+        let isLoading = false;
+    let sentinelObserver = null;
+
+        const updateControlsVisibility = () => {
+            if (loadMoreButton) {
+                loadMoreButton.classList.toggle('hidden', !hasMore);
+                loadMoreButton.disabled = !hasMore;
+            }
+        };
+
+        const setStatus = (visible, message) => {
+            if (!statusLabel) {
+                return;
+            }
+            if (message) {
+                statusLabel.textContent = message;
+            }
+            statusLabel.classList.toggle('hidden', !visible);
+        };
+
+        const buildRequestUrl = () => {
+            if (!endpoint) {
+                return null;
+            }
+
+            try {
+                const requestUrl = new URL(endpoint, window.location.origin);
+                requestUrl.searchParams.set('offset', String(offset));
+                requestUrl.searchParams.set('limit', String(pageSize));
+                return requestUrl.toString();
+            } catch (error) {
+                console.error('Community feed endpoint non valido:', error);
+                return null;
+            }
+        };
+
+        const appendPosts = (html) => {
+            if (!feedList || !html) {
+                return;
+            }
+            feedList.insertAdjacentHTML('beforeend', html);
+        };
+
+        const fetchNextBatch = async () => {
+            if (isLoading || !hasMore) {
+                return;
+            }
+
+            const requestUrl = buildRequestUrl();
+            if (!requestUrl) {
+                return;
+            }
+
+            isLoading = true;
+            setStatus(true, 'Caricamento in corso…');
+            if (loadMoreButton) {
+                loadMoreButton.disabled = true;
+            }
+
+            try {
+                const response = await fetch(requestUrl, {
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Richiesta non valida (${response.status})`);
+                }
+
+                const payload = await response.json();
+                if (payload && typeof payload.html === 'string') {
+                    appendPosts(payload.html);
+                }
+
+                hasMore = Boolean(payload && payload.has_more);
+                const nextOffset = payload && typeof payload.next_offset === 'number'
+                    ? payload.next_offset
+                    : offset;
+                offset = nextOffset;
+            } catch (error) {
+                console.error('Errore durante il caricamento del feed community:', error);
+                setStatus(true, 'Errore durante il caricamento. Riprova.');
+                if (loadMoreButton) {
+                    loadMoreButton.disabled = false;
+                }
+                isLoading = false;
+                return;
+            }
+
+            setStatus(false);
+            feedContainer.dataset.feedHasMore = hasMore ? '1' : '0';
+            feedContainer.dataset.feedOffset = String(offset);
+            updateControlsVisibility();
+            if (!hasMore && sentinelObserver) {
+                sentinelObserver.disconnect();
+            }
+            if (loadMoreButton) {
+                loadMoreButton.disabled = false;
+            }
+            isLoading = false;
+        };
+
+        updateControlsVisibility();
+
+        if (loadMoreButton) {
+            loadMoreButton.addEventListener('click', fetchNextBatch);
+        }
+
+        if ('IntersectionObserver' in window && sentinel) {
+            sentinelObserver = new IntersectionObserver((entries) => {
+                entries.forEach((entry) => {
+                    if (entry.isIntersecting) {
+                        fetchNextBatch();
+                    }
+                });
+            }, {
+                root: null,
+                rootMargin: '0px 0px 200px 0px',
+            });
+
+            sentinelObserver.observe(sentinel);
+        }
+    }
 });
