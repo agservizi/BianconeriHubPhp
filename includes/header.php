@@ -31,6 +31,10 @@ $ctaHref = $loggedUser ? '?page=community' : '?page=register';
 $ctaLabel = $loggedUser ? 'Vai alla community' : 'Diventa socio';
 $isHomeRoute = isset($activeRoute) ? $activeRoute === 'home' : (($currentPage ?? 'home') === 'home');
 $routeKey = $activeRoute ?? ($currentPage ?? 'home');
+$navActivePage = $currentPage ?? 'home';
+if ($navActivePage === 'profile_search') {
+    $navActivePage = 'profile';
+}
 $pageDescriptions = [
     'home' => 'Notizie ufficiali, approfondimenti esclusivi e community sempre connessa: vivi la Juventus da protagonista.',
     'news' => 'Restiamo sul pezzo: breaking news, analisi post-partita e voci di mercato curate ogni giorno.',
@@ -38,10 +42,15 @@ $pageDescriptions = [
     'partite' => 'Calendario sempre aggiornato con orari, stadio, dirette TV e reminder per non perdere nemmeno un fischio.',
     'community' => 'La curva digitale dove la voce dei tifosi diventa racconto, idee e cori a sostegno della Vecchia Signora.',
     'profile' => 'Gestisci il tuo account, consulta le statistiche personali e ripercorri il tuo contributo alla community bianconera.',
+    'profile_search' => 'Cerca e segui altri tifosi per personalizzare il tuo feed e ricevere notifiche mirate.',
     'login' => 'Accedi alla tua area riservata per gestire profilo, badge e partecipare alle discussioni in diretta.',
     'register' => 'Iscriviti per ottenere badge esclusivi, contenuti extra e vivere l’esperienza BianconeriHub completa.',
 ];
 $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato alla Juventus con cronache, dibattiti e iniziative esclusive.';
+$profileSearchQuery = '';
+if (($currentPage ?? '') === 'profile_search') {
+    $profileSearchQuery = trim((string) ($_GET['q'] ?? ''));
+}
 ?>
 <!DOCTYPE html>
 <html lang="it">
@@ -143,7 +152,7 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                                     }
                                 }
 
-                                $isActive = isset($currentPage) && $currentPage === $pageKey;
+                                $isActive = $navActivePage === $pageKey;
                                 $linkClasses = $isActive
                                     ? 'inline-flex items-center gap-2 rounded-full bg-white text-black px-4 py-2 shadow-lg'
                                     : 'inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-gray-300 hover:border-white/40 hover:text-white transition-all';
@@ -156,6 +165,27 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                                         <?php echo htmlspecialchars($linkLabel, ENT_QUOTES, 'UTF-8'); ?>
                                     </a>
                                 </li>
+                                <?php if ($pageKey === 'profile'): ?>
+                                    <li>
+                                        <form action="" method="get" class="flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-sm text-white transition-all focus-within:border-white/60">
+                                            <input type="hidden" name="page" value="profile_search">
+                                            <label for="nav-profile-search" class="sr-only">Cerca tifosi</label>
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M18 10.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />
+                                            </svg>
+                                            <input
+                                                id="nav-profile-search"
+                                                type="search"
+                                                name="q"
+                                                value="<?php echo htmlspecialchars($profileSearchQuery, ENT_QUOTES, 'UTF-8'); ?>"
+                                                class="w-40 bg-transparent text-sm text-white placeholder:text-gray-500 focus:outline-none md:w-48"
+                                                placeholder="Cerca tifoso"
+                                                autocomplete="off"
+                                            >
+                                            <button type="submit" class="rounded-full bg-white/10 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gray-300 transition-all hover:bg-white hover:text-black">Vai</button>
+                                        </form>
+                                    </li>
+                                <?php endif; ?>
                             <?php } ?>
                         </ul>
                     </nav>
@@ -177,7 +207,7 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                                     }
                                 }
 
-                                $isActive = isset($currentPage) && $currentPage === $pageKey;
+                                $isActive = $navActivePage === $pageKey;
                                 $linkClasses = $isActive
                                     ? 'flex items-center gap-3 rounded-xl bg-white/15 px-4 py-2 text-white shadow-inner'
                                     : 'flex items-center gap-3 rounded-xl px-4 py-2 text-gray-300 transition-all hover:bg-white/10 hover:text-white';
@@ -195,6 +225,23 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                             <?php } ?>
                         </ul>
                     </nav>
+                    <form action="" method="get" class="flex items-center gap-2 rounded-full border border-white/15 bg-black/25 px-4 py-2 text-sm text-white focus-within:border-white/50">
+                        <input type="hidden" name="page" value="profile_search">
+                        <label for="nav-profile-search-mobile" class="sr-only">Cerca tifosi</label>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M18 10.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />
+                        </svg>
+                        <input
+                            id="nav-profile-search-mobile"
+                            type="search"
+                            name="q"
+                            value="<?php echo htmlspecialchars($profileSearchQuery, ENT_QUOTES, 'UTF-8'); ?>"
+                            class="flex-1 bg-transparent text-sm text-white placeholder:text-gray-500 focus:outline-none"
+                            placeholder="Cerca tifoso"
+                            autocomplete="off"
+                        >
+                        <button type="submit" class="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-gray-300 transition-all hover:bg-white hover:text-black">Vai</button>
+                    </form>
                     <div class="flex flex-col gap-2">
                         <?php if ($loggedUser): ?>
                             <a href="?action=logout" class="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-white hover:text-black">

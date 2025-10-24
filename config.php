@@ -794,6 +794,7 @@ $availablePages = [
     'partite' => __DIR__ . '/pages/partite.php',
     'community' => __DIR__ . '/pages/community.php',
     'profile' => __DIR__ . '/pages/profile.php',
+    'profile_search' => __DIR__ . '/pages/profile_search.php',
     'login' => __DIR__ . '/pages/login.php',
     'register' => __DIR__ . '/pages/register.php',
 ];
@@ -805,6 +806,7 @@ $pageTitles = [
     'partite' => 'Partite',
     'community' => 'Community',
     'profile' => 'Profilo',
+    'profile_search' => 'Cerca tifosi',
     'login' => 'Accedi',
     'register' => 'Registrati',
 ];
@@ -1031,6 +1033,104 @@ function findUserById(int $userId): ?array
     }
 
     return null;
+}
+
+function searchCommunityUsers(string $query, int $limit = 12, int $offset = 0): array
+{
+    $term = trim($query);
+    $limit = max(1, min($limit, 50));
+    $offset = max(0, $offset);
+
+    $response = [
+        'query' => $term,
+        'results' => [],
+        'total' => 0,
+        'limit' => $limit,
+        'offset' => $offset,
+        'has_more' => false,
+        'too_short' => false,
+        'minimum_length' => 2,
+    ];
+
+    if ($term === '') {
+        return $response;
+    }
+
+    if (mb_strlen($term) < $response['minimum_length']) {
+        $response['too_short'] = true;
+        return $response;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return $response;
+    }
+
+    $currentUser = getLoggedInUser();
+    $currentUserId = isset($currentUser['id']) ? (int) $currentUser['id'] : 0;
+
+    $escapedTerm = strtr($term, [
+        "\\" => "\\\\",
+        "%" => "\\%",
+        "_" => "\\_",
+    ]);
+    $likeTerm = '%' . $escapedTerm . '%';
+
+    try {
+        $countStatement = $pdo->prepare("SELECT COUNT(*) FROM users WHERE username LIKE :term ESCAPE '\\\\'");
+        $countStatement->execute(['term' => $likeTerm]);
+        $total = (int) ($countStatement->fetchColumn() ?: 0);
+        $response['total'] = $total;
+
+        if ($total === 0) {
+            return $response;
+        }
+
+        $sql = <<<SQL
+SELECT u.id, u.username, u.badge, u.avatar_url, u.created_at,
+       CASE WHEN f.follower_id IS NULL THEN 0 ELSE 1 END AS is_following
+FROM users u
+LEFT JOIN community_followers f ON f.user_id = u.id AND f.follower_id = :viewer
+WHERE u.username LIKE :term ESCAPE '\\'
+ORDER BY u.username ASC
+LIMIT $limit OFFSET $offset
+SQL;
+
+        $statement = $pdo->prepare($sql);
+        $statement->bindValue(':viewer', $currentUserId, PDO::PARAM_INT);
+        $statement->bindValue(':term', $likeTerm, PDO::PARAM_STR);
+        $statement->execute();
+
+        $results = [];
+        foreach ($statement as $row) {
+            $userId = (int) ($row['id'] ?? 0);
+            if ($userId <= 0) {
+                continue;
+            }
+
+            $createdAt = normalizeToTimestamp($row['created_at'] ?? time());
+
+            $results[] = [
+                'id' => $userId,
+                'username' => $row['username'] ?? '',
+                'badge' => $row['badge'] ?? 'Tifoso',
+                'avatar_url' => $row['avatar_url'] ?? null,
+                'created_at' => $createdAt,
+                'is_following' => ((int) ($row['is_following'] ?? 0)) === 1,
+                'viewer_can_follow' => $currentUserId > 0 && $currentUserId !== $userId,
+                'is_current_user' => $currentUserId > 0 && $currentUserId === $userId,
+            ];
+        }
+
+        $response['results'] = $results;
+        $response['has_more'] = ($offset + count($results)) < $total;
+
+        return $response;
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to search community users: ' . $exception->getMessage());
+    }
+
+    return $response;
 }
 
 function getUserProfileSummary(int $userId): array
