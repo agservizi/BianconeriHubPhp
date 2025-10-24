@@ -135,16 +135,39 @@ CREATE TABLE `community_posts` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `user_id` INT UNSIGNED NOT NULL,
     `content` TEXT NOT NULL,
-    `content_type` ENUM('text', 'photo', 'poll') NOT NULL DEFAULT 'text',
+    `content_type` ENUM('text', 'photo', 'gallery', 'poll') NOT NULL DEFAULT 'text',
     `media_url` VARCHAR(255) DEFAULT NULL,
     `poll_question` VARCHAR(255) DEFAULT NULL,
     `poll_options` JSON DEFAULT NULL,
+    `status` ENUM('published', 'scheduled', 'draft') NOT NULL DEFAULT 'published',
+    `scheduled_for` DATETIME DEFAULT NULL,
+    `published_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     KEY `community_posts_user_id_foreign` (`user_id`),
+    KEY `community_posts_status_index` (`status`),
+    KEY `community_posts_scheduled_for_index` (`scheduled_for`),
     CONSTRAINT `community_posts_user_id_foreign`
         FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Table: community_post_media
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `community_post_media`;
+CREATE TABLE `community_post_media` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `post_id` INT UNSIGNED NOT NULL,
+    `file_path` VARCHAR(255) NOT NULL,
+    `mime_type` VARCHAR(80) DEFAULT NULL,
+    `position` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `community_post_media_post_id_foreign` (`post_id`),
+    CONSTRAINT `community_post_media_post_id_foreign`
+        FOREIGN KEY (`post_id`) REFERENCES `community_posts` (`id`)
         ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

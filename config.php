@@ -1132,8 +1132,278 @@ function getLoggedInUser(): ?array
     return $_SESSION['bh_current_user'] ?? null;
 }
 
+function publishDueCommunityPosts(): void
+{
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return;
+    }
+
+    try {
+        $pdo->exec('UPDATE community_posts SET status = "published", published_at = NOW(), scheduled_for = NULL WHERE status = "scheduled" AND scheduled_for IS NOT NULL AND scheduled_for <= NOW()');
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to publish scheduled community posts: ' . $exception->getMessage());
+    }
+}
+
+function getCommunityPostMedia(array $postIds): array
+{
+    $uniqueIds = [];
+    foreach ($postIds as $postId) {
+        $intId = (int) $postId;
+        if ($intId > 0) {
+            $uniqueIds[$intId] = $intId;
+        }
+    }
+
+    if (empty($uniqueIds)) {
+        return [];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($uniqueIds), '?'));
+
+    try {
+        $statement = $pdo->prepare('SELECT id, post_id, file_path, mime_type, position FROM community_post_media WHERE post_id IN (' . $placeholders . ') ORDER BY position ASC, id ASC');
+        $statement->execute(array_values($uniqueIds));
+
+        $media = [];
+        foreach ($statement as $row) {
+            $postId = (int) ($row['post_id'] ?? 0);
+            if ($postId <= 0) {
+                continue;
+            }
+
+            if (!isset($media[$postId])) {
+                $media[$postId] = [];
+            }
+
+            $media[$postId][] = [
+                'id' => (int) ($row['id'] ?? 0),
+                'path' => $row['file_path'] ?? '',
+                'mime' => $row['mime_type'] ?? '',
+                'position' => (int) ($row['position'] ?? 0),
+            ];
+        }
+
+        return $media;
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community post media: ' . $exception->getMessage());
+    }
+
+    return [];
+}
+
+function getCommunityMediaAbsolutePath(string $relativePath): string
+{
+    $normalized = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $relativePath);
+    if (strpos($normalized, 'uploads' . DIRECTORY_SEPARATOR . 'community') !== 0) {
+        $normalized = 'uploads' . DIRECTORY_SEPARATOR . 'community' . DIRECTORY_SEPARATOR . ltrim($normalized, DIRECTORY_SEPARATOR);
+    }
+
+    return __DIR__ . DIRECTORY_SEPARATOR . $normalized;
+}
+
+function deleteCommunityMediaFile(string $relativePath): void
+{
+    $absolute = getCommunityMediaAbsolutePath($relativePath);
+    if (is_file($absolute)) {
+        @unlink($absolute);
+    }
+}
+
+function extractMentionsFromText(string $content): array
+{
+    $mentions = [];
+    if (preg_match_all('/(?<=^|\s)@([a-z0-9_]{3,30})/iu', $content, $matches)) {
+        foreach ($matches[1] as $username) {
+            $mentions[strtolower($username)] = $username;
+        }
+    }
+
+    return array_values($mentions);
+}
+
+function getUsersByUsernames(array $usernames): array
+{
+    if (empty($usernames)) {
+        return [];
+    }
+
+    $unique = [];
+    foreach ($usernames as $username) {
+        $trimmed = trim((string) $username);
+        if ($trimmed !== '') {
+            $unique[strtolower($trimmed)] = $trimmed;
+        }
+    }
+
+    if (empty($unique)) {
+        return [];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($unique), '?'));
+
+    try {
+        $statement = $pdo->prepare('SELECT username, badge FROM users WHERE LOWER(username) IN (' . $placeholders . ')');
+        $statement->execute(array_keys($unique));
+
+        $map = [];
+        foreach ($statement as $row) {
+            $username = $row['username'] ?? '';
+            if ($username === '') {
+                continue;
+            }
+            $map[strtolower($username)] = [
+                'username' => $username,
+                'badge' => $row['badge'] ?? 'Tifoso',
+            ];
+        }
+
+        return $map;
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to resolve mention usernames: ' . $exception->getMessage());
+    }
+
+    return [];
+}
+
+function renderCommunityContent(string $content, array $mentionMap): array
+{
+    $escaped = htmlspecialchars($content, ENT_QUOTES, 'UTF-8');
+    $usedMentions = [];
+
+    $rendered = preg_replace_callback(
+        '/(?<=^|\s)@([a-z0-9_]{3,30})/iu',
+        function ($matches) use ($mentionMap, &$usedMentions) {
+            $lookup = strtolower($matches[1]);
+            if (!isset($mentionMap[$lookup])) {
+                return $matches[0];
+            }
+
+            $user = $mentionMap[$lookup];
+            $usedMentions[$lookup] = $user['username'];
+            $label = '@' . htmlspecialchars($user['username'], ENT_QUOTES, 'UTF-8');
+            $url = '?page=community&user=' . urlencode($user['username']);
+
+            return str_replace(
+                '@' . $matches[1],
+                '<a href="' . $url . '" class="mention">' . $label . '</a>',
+                $matches[0]
+            );
+        },
+        $escaped
+    );
+
+    return [
+        'html' => nl2br($rendered),
+        'mentions' => array_values($usedMentions),
+    ];
+}
+
+function normalizeUploadedFiles(array $fileSpec): array
+{
+    if (!isset($fileSpec['name'])) {
+        return [];
+    }
+
+    if (!is_array($fileSpec['name'])) {
+        return [
+            [
+                'name' => $fileSpec['name'] ?? '',
+                'type' => $fileSpec['type'] ?? '',
+                'tmp_name' => $fileSpec['tmp_name'] ?? '',
+                'error' => $fileSpec['error'] ?? UPLOAD_ERR_NO_FILE,
+                'size' => $fileSpec['size'] ?? 0,
+            ],
+        ];
+    }
+
+    $normalized = [];
+    foreach ($fileSpec['name'] as $index => $name) {
+        $normalized[] = [
+            'name' => $name ?? '',
+            'type' => $fileSpec['type'][$index] ?? '',
+            'tmp_name' => $fileSpec['tmp_name'][$index] ?? '',
+            'error' => $fileSpec['error'][$index] ?? UPLOAD_ERR_NO_FILE,
+            'size' => $fileSpec['size'][$index] ?? 0,
+        ];
+    }
+
+    return $normalized;
+}
+
+function getCommunityPostForEditing(int $postId, int $userId): ?array
+{
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return null;
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT id, user_id, content, content_type, poll_question, poll_options, status, scheduled_for, published_at, media_url FROM community_posts WHERE id = :id AND user_id = :user_id LIMIT 1');
+        $statement->execute([
+            'id' => $postId,
+            'user_id' => $userId,
+        ]);
+
+        $row = $statement->fetch();
+        if (!$row) {
+            return null;
+        }
+
+        $pollOptions = [];
+        if (!empty($row['poll_options'])) {
+            try {
+                $decoded = json_decode((string) $row['poll_options'], true, 512, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $option) {
+                        $optionText = trim((string) $option);
+                        if ($optionText !== '') {
+                            $pollOptions[] = mb_substr($optionText, 0, 120);
+                        }
+                    }
+                }
+            } catch (\JsonException $exception) {
+                $pollOptions = [];
+            }
+        }
+
+        $mediaMap = getCommunityPostMedia([$postId]);
+
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'user_id' => (int) ($row['user_id'] ?? 0),
+            'content' => $row['content'] ?? '',
+            'content_type' => $row['content_type'] ?? 'text',
+            'poll_question' => $row['poll_question'] ?? '',
+            'poll_options' => $pollOptions,
+            'status' => $row['status'] ?? 'draft',
+            'scheduled_for' => $row['scheduled_for'] ?? null,
+            'published_at' => $row['published_at'] ?? null,
+            'media_url' => $row['media_url'] ?? '',
+            'media' => $mediaMap[$postId] ?? [],
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community post for editing: ' . $exception->getMessage());
+    }
+
+    return null;
+}
+
 function getCommunityPosts(): array
 {
+    publishDueCommunityPosts();
+
     $pdo = getDatabaseConnection();
     if (!$pdo) {
         return [];
@@ -1151,6 +1421,7 @@ function getCommunityPosts(): array
                 p.poll_question,
                 p.poll_options,
                 p.created_at,
+                p.published_at,
                 u.username,
                 u.badge,
                 (SELECT COUNT(*) FROM community_post_comments c WHERE c.post_id = p.id) AS comments_count,
@@ -1173,7 +1444,8 @@ function getCommunityPosts(): array
 
     $sql .= ' FROM community_posts p
               INNER JOIN users u ON u.id = p.user_id
-              ORDER BY p.created_at DESC';
+              WHERE p.status = "published" AND (p.published_at IS NULL OR p.published_at <= NOW())
+              ORDER BY p.published_at DESC, p.created_at DESC';
 
     try {
         $statement = $pdo->prepare($sql);
@@ -1185,6 +1457,7 @@ function getCommunityPosts(): array
 
         $posts = [];
 
+        $rawPosts = [];
         foreach ($statement as $row) {
             $pollOptions = [];
             if (!empty($row['poll_options'])) {
@@ -1203,7 +1476,7 @@ function getCommunityPosts(): array
                 }
             }
 
-            $posts[] = [
+            $rawPosts[] = [
                 'id' => (int) ($row['id'] ?? 0),
                 'user_id' => (int) ($row['user_id'] ?? 0),
                 'author' => $row['username'] ?? 'Tifoso',
@@ -1214,12 +1487,54 @@ function getCommunityPosts(): array
                 'poll_question' => $row['poll_question'] ?? '',
                 'poll_options' => $pollOptions,
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+                'published_at' => normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time())),
                 'likes_count' => (int) ($row['likes_count'] ?? 0),
                 'supports_count' => (int) ($row['supports_count'] ?? 0),
                 'comments_count' => (int) ($row['comments_count'] ?? 0),
                 'has_liked' => ((int) ($row['has_liked'] ?? 0)) === 1,
                 'has_supported' => ((int) ($row['has_supported'] ?? 0)) === 1,
             ];
+        }
+
+        if (empty($rawPosts)) {
+            return [];
+        }
+
+        $postIds = array_map(static function (array $post): int {
+            return $post['id'];
+        }, $rawPosts);
+
+        $mediaMap = getCommunityPostMedia($postIds);
+
+        $allMentions = [];
+        foreach ($rawPosts as $post) {
+            $mentions = extractMentionsFromText($post['content']);
+            foreach ($mentions as $mention) {
+                $allMentions[strtolower($mention)] = $mention;
+            }
+        }
+
+        $mentionMap = getUsersByUsernames(array_values($allMentions));
+
+        $posts = [];
+        foreach ($rawPosts as $post) {
+            $postMedia = $mediaMap[$post['id']] ?? [];
+            if (empty($postMedia) && $post['media_url'] !== '') {
+                $postMedia[] = [
+                    'id' => 0,
+                    'path' => $post['media_url'],
+                    'mime' => '',
+                    'position' => 0,
+                ];
+            }
+
+            $contentRender = renderCommunityContent($post['content'], $mentionMap);
+
+            $post['media'] = $postMedia;
+            $post['content_rendered'] = $contentRender['html'];
+            $post['mentions'] = $contentRender['mentions'];
+
+            $posts[] = $post;
         }
 
         return $posts;
@@ -1238,7 +1553,7 @@ function getCommunityPostMeta(int $postId): ?array
     }
 
     try {
-        $statement = $pdo->prepare('SELECT id, user_id FROM community_posts WHERE id = :id LIMIT 1');
+        $statement = $pdo->prepare('SELECT id, user_id, status FROM community_posts WHERE id = :id LIMIT 1');
         $statement->execute(['id' => $postId]);
         $row = $statement->fetch();
 
@@ -1246,9 +1561,15 @@ function getCommunityPostMeta(int $postId): ?array
             return null;
         }
 
+        $status = $row['status'] ?? 'published';
+        if ($status !== 'published') {
+            return null;
+        }
+
         return [
             'id' => (int) ($row['id'] ?? 0),
             'user_id' => (int) ($row['user_id'] ?? 0),
+            'status' => $status,
         ];
     } catch (PDOException $exception) {
         error_log('[BianconeriHub] Failed to load community post meta: ' . $exception->getMessage());
@@ -1597,15 +1918,19 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         $mode = 'text';
     }
 
+    $action = strtolower((string) ($input['composer_action'] ?? 'publish'));
+    $allowedActions = ['publish', 'schedule', 'draft'];
+    if (!in_array($action, $allowedActions, true)) {
+        $action = 'publish';
+    }
+
+    $draftId = isset($input['draft_id']) ? (int) $input['draft_id'] : 0;
+    $scheduleAtRaw = trim((string) ($input['schedule_at'] ?? ''));
+
     if ($message !== '' && mb_strlen($message) > 500) {
         return ['success' => false, 'message' => 'Il messaggio non può superare i 500 caratteri.'];
     }
 
-    $mediaUrl = trim((string) ($input['media_url'] ?? ''));
-    $mediaFile = $files['media_file'] ?? null;
-    $clipboardData = trim((string) ($input['media_clipboard'] ?? ''));
-    $clipboardName = trim((string) ($input['media_clipboard_name'] ?? ''));
-    $uploadedPhoto = null;
     $pollQuestion = trim((string) ($input['poll_question'] ?? ''));
     $pollOptionsRaw = $input['poll_options'] ?? [];
     if (!is_array($pollOptionsRaw)) {
@@ -1620,42 +1945,56 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         }
     }
 
+    $clipboardData = trim((string) ($input['media_clipboard'] ?? ''));
+    $clipboardName = trim((string) ($input['media_clipboard_name'] ?? ''));
+
+    $existingMediaInput = $input['existing_media'] ?? [];
+    if (!is_array($existingMediaInput)) {
+        $existingMediaInput = [];
+    }
+    $existingMediaIds = [];
+    foreach ($existingMediaInput as $mediaId) {
+        $id = (int) $mediaId;
+        if ($id > 0) {
+            $existingMediaIds[$id] = $id;
+        }
+    }
+
+    $newUploadFiles = [];
+    if (isset($files['media_files'])) {
+        foreach (normalizeUploadedFiles($files['media_files']) as $file) {
+            if (($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            $newUploadFiles[] = $file;
+        }
+    }
+
+    if (isset($files['media_file'])) {
+        foreach (normalizeUploadedFiles($files['media_file']) as $file) {
+            if (($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            $newUploadFiles[] = $file;
+        }
+    }
+
+    $maxAttachments = 4;
+    $attachmentBuffer = count($existingMediaIds) + count($newUploadFiles) + ($clipboardData !== '' ? 1 : 0);
+    if ($attachmentBuffer > $maxAttachments) {
+        return ['success' => false, 'message' => 'Puoi allegare al massimo ' . $maxAttachments . ' immagini per post.'];
+    }
+
     if ($mode === 'text' && $message === '') {
         return ['success' => false, 'message' => 'Il messaggio non può essere vuoto.'];
     }
 
-    if ($mode === 'photo') {
-        $hasUploadedFile = is_array($mediaFile) && (($mediaFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE);
+    if ($mode !== 'photo' && $attachmentBuffer > 0) {
+        return ['success' => false, 'message' => 'Gli allegati sono disponibili solo per i post fotografici.'];
+    }
 
-        if ($hasUploadedFile) {
-            $uploadResult = handleCommunityPhotoUpload($mediaFile);
-            if (!$uploadResult['success']) {
-                return ['success' => false, 'message' => $uploadResult['message']];
-            }
-
-            $uploadedPhoto = $uploadResult;
-            $mediaUrl = $uploadResult['relative_path'];
-            $clipboardData = '';
-            $clipboardName = '';
-        } elseif (is_string($clipboardData) && trim($clipboardData) !== '') {
-            $uploadResult = handleCommunityClipboardUpload($clipboardData, $clipboardName);
-            if (!$uploadResult['success']) {
-                return ['success' => false, 'message' => $uploadResult['message']];
-            }
-
-            $uploadedPhoto = $uploadResult;
-            $mediaUrl = $uploadResult['relative_path'];
-            $clipboardData = '';
-            $clipboardName = '';
-        } elseif ($mediaUrl !== '') {
-            if (!filter_var($mediaUrl, FILTER_VALIDATE_URL)) {
-                return ['success' => false, 'message' => 'Il link dell’immagine non è valido.'];
-            }
-        } else {
-            return ['success' => false, 'message' => 'Carica una foto dal tuo dispositivo o incolla un’immagine.'];
-        }
-    } else {
-        $mediaUrl = '';
+    if ($mode === 'photo' && $attachmentBuffer === 0) {
+        return ['success' => false, 'message' => 'Aggiungi almeno un’immagine al tuo post fotografico.'];
     }
 
     if ($mode === 'poll') {
@@ -1673,6 +2012,46 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         $pollOptions = [];
     }
 
+    $scheduleDate = null;
+    if ($action === 'schedule') {
+        if ($scheduleAtRaw === '') {
+            return ['success' => false, 'message' => 'Imposta data e ora di pubblicazione.'];
+        }
+
+        $scheduleDate = DateTime::createFromFormat('Y-m-d\TH:i', $scheduleAtRaw);
+        if (!$scheduleDate) {
+            try {
+                $scheduleDate = new DateTime($scheduleAtRaw);
+            } catch (\Exception $exception) {
+                $scheduleDate = false;
+            }
+        }
+
+        if (!$scheduleDate) {
+            return ['success' => false, 'message' => 'La data programmata non è valida.'];
+        }
+
+        $now = new DateTime('+5 minutes');
+        if ($scheduleDate <= $now) {
+            return ['success' => false, 'message' => 'Programma il post con almeno cinque minuti di anticipo.'];
+        }
+    }
+
+    $existingPost = null;
+    $isUpdating = false;
+    if ($draftId > 0) {
+        $existingPost = getCommunityPostForEditing($draftId, $userId);
+        if (!$existingPost) {
+            return ['success' => false, 'message' => 'Bozza non trovata o non autorizzata.'];
+        }
+
+        if (!in_array($existingPost['status'], ['draft', 'scheduled'], true)) {
+            return ['success' => false, 'message' => 'Questo post è già stato pubblicato.'];
+        }
+
+        $isUpdating = true;
+    }
+
     $pollOptionsJson = null;
     if ($mode === 'poll') {
         try {
@@ -1688,26 +2067,199 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
     }
 
+    $uploads = [];
+    foreach ($newUploadFiles as $file) {
+        $uploadResult = handleCommunityPhotoUpload($file);
+        if (!$uploadResult['success']) {
+            foreach ($uploads as $upload) {
+                deleteCommunityMediaFile($upload['relative_path']);
+            }
+
+            return ['success' => false, 'message' => $uploadResult['message']];
+        }
+
+        $uploads[] = [
+            'relative_path' => $uploadResult['relative_path'],
+            'absolute_path' => $uploadResult['absolute_path'],
+            'mime' => $uploadResult['mime'],
+        ];
+    }
+
+    $status = 'published';
+    $scheduledFor = null;
+    $publishedAt = null;
+
+    if ($action === 'draft') {
+        $status = 'draft';
+    } elseif ($action === 'schedule' && $scheduleDate instanceof \DateTimeInterface) {
+        $status = 'scheduled';
+        $scheduledFor = clone $scheduleDate;
+    }
+
+    if ($status === 'published') {
+        $publishedAt = new DateTime();
+    } elseif ($status === 'scheduled' && $scheduleDate instanceof \DateTimeInterface) {
+        $publishedAt = clone $scheduleDate;
+    }
+
+    if ($status !== 'scheduled') {
+        $scheduledFor = null;
+    }
+
+    $existingMediaRecords = $existingPost['media'] ?? [];
+    $keptMedia = [];
+    foreach ($existingMediaRecords as $record) {
+        if (isset($existingMediaIds[$record['id']])) {
+            $keptMedia[] = $record;
+        }
+    }
+
+    $mediaToDelete = [];
+    foreach ($existingMediaRecords as $record) {
+        if (!isset($existingMediaIds[$record['id']])) {
+            $mediaToDelete[] = $record;
+        }
+    }
+
+    if ($clipboardData !== '') {
+        $clipboardUpload = handleCommunityClipboardUpload($clipboardData, $clipboardName);
+        if (!$clipboardUpload['success']) {
+            foreach ($uploads as $upload) {
+                deleteCommunityMediaFile($upload['relative_path']);
+            }
+
+            return ['success' => false, 'message' => $clipboardUpload['message']];
+        }
+
+        $uploads[] = [
+            'relative_path' => $clipboardUpload['relative_path'],
+            'absolute_path' => $clipboardUpload['absolute_path'],
+            'mime' => $clipboardUpload['mime'],
+        ];
+    }
+
+    $totalAttachments = count($keptMedia) + count($uploads);
+    if ($mode === 'photo' && $totalAttachments === 0) {
+        foreach ($uploads as $upload) {
+            deleteCommunityMediaFile($upload['relative_path']);
+        }
+
+        return ['success' => false, 'message' => 'Aggiungi almeno un’immagine al tuo post.'];
+    }
+
+    $finalContentType = $mode;
+    if ($mode === 'photo' && $totalAttachments > 1) {
+        $finalContentType = 'gallery';
+    }
+
     try {
-        $statement = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, media_url, poll_question, poll_options) VALUES (:user_id, :content, :content_type, :media_url, :poll_question, :poll_options)');
-        $statement->execute([
-            'user_id' => $userId,
-            'content' => $message,
-            'content_type' => $mode,
-            'media_url' => $mediaUrl !== '' ? $mediaUrl : null,
-            'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
-            'poll_options' => $pollOptionsJson,
+        $pdo->beginTransaction();
+
+        if ($isUpdating) {
+            $update = $pdo->prepare('UPDATE community_posts SET content = :content, content_type = :content_type, poll_question = :poll_question, poll_options = :poll_options, status = :status, scheduled_for = :scheduled_for, published_at = :published_at, updated_at = NOW() WHERE id = :id AND user_id = :user_id');
+            $update->execute([
+                'content' => $message,
+                'content_type' => $finalContentType,
+                'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
+                'poll_options' => $pollOptionsJson,
+                'status' => $status,
+                'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
+                'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
+                'id' => $existingPost['id'],
+                'user_id' => $userId,
+            ]);
+
+            $postId = $existingPost['id'];
+        } else {
+            $insert = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, poll_question, poll_options, status, scheduled_for, published_at) VALUES (:user_id, :content, :content_type, :poll_question, :poll_options, :status, :scheduled_for, :published_at)');
+            $insert->execute([
+                'user_id' => $userId,
+                'content' => $message,
+                'content_type' => $finalContentType,
+                'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
+                'poll_options' => $pollOptionsJson,
+                'status' => $status,
+                'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
+                'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
+            ]);
+
+            $postId = (int) $pdo->lastInsertId();
+        }
+
+        foreach ($mediaToDelete as $record) {
+            $delete = $pdo->prepare('DELETE FROM community_post_media WHERE id = :id AND post_id = :post_id');
+            $delete->execute([
+                'id' => (int) $record['id'],
+                'post_id' => $postId,
+            ]);
+            if (!empty($record['path'])) {
+                deleteCommunityMediaFile($record['path']);
+            }
+        }
+
+        $mediaOrder = [];
+        foreach ($keptMedia as $record) {
+            $mediaOrder[] = [
+                'id' => (int) $record['id'],
+                'path' => $record['path'],
+                'mime' => $record['mime'] ?? '',
+            ];
+        }
+
+        foreach ($uploads as $upload) {
+            $mediaOrder[] = [
+                'id' => 0,
+                'path' => $upload['relative_path'],
+                'mime' => $upload['mime'],
+            ];
+        }
+
+        foreach ($mediaOrder as $index => $mediaItem) {
+            if ($mediaItem['id'] > 0) {
+                $updatePosition = $pdo->prepare('UPDATE community_post_media SET position = :position WHERE id = :id AND post_id = :post_id');
+                $updatePosition->execute([
+                    'position' => $index,
+                    'id' => $mediaItem['id'],
+                    'post_id' => $postId,
+                ]);
+            } else {
+                $insertMedia = $pdo->prepare('INSERT INTO community_post_media (post_id, file_path, mime_type, position) VALUES (:post_id, :file_path, :mime_type, :position)');
+                $insertMedia->execute([
+                    'post_id' => $postId,
+                    'file_path' => $mediaItem['path'],
+                    'mime_type' => $mediaItem['mime'],
+                    'position' => $index,
+                ]);
+            }
+        }
+
+        $coverPath = $mediaOrder[0]['path'] ?? null;
+        $coverUpdate = $pdo->prepare('UPDATE community_posts SET media_url = :media_url WHERE id = :id');
+        $coverUpdate->execute([
+            'media_url' => $coverPath !== null ? $coverPath : null,
+            'id' => $postId,
         ]);
 
-        return ['success' => true];
+        $pdo->commit();
+
+        return [
+            'success' => true,
+            'post_id' => $postId,
+            'status' => $status,
+        ];
     } catch (PDOException $exception) {
-        if ($uploadedPhoto && !empty($uploadedPhoto['absolute_path']) && is_file($uploadedPhoto['absolute_path'])) {
-            @unlink($uploadedPhoto['absolute_path']);
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
         }
+
+        foreach ($uploads as $upload) {
+            deleteCommunityMediaFile($upload['relative_path']);
+        }
+
         error_log('[BianconeriHub] Failed to add community post: ' . $exception->getMessage());
     }
 
-    return ['success' => false, 'message' => 'Impossibile pubblicare il messaggio al momento.'];
+    return ['success' => false, 'message' => 'Impossibile salvare il messaggio al momento.'];
 }
 
 function findMatchById(int $matchId): ?array
