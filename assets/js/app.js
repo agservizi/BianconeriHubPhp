@@ -51,8 +51,14 @@ document.addEventListener('DOMContentLoaded', () => {
     navItems.forEach((item) => {
         const target = item.getAttribute('data-nav-target');
         if (target === currentPage) {
-            item.classList.add('text-white', 'scale-105');
-            item.classList.remove('text-gray-400');
+            item.classList.add('scale-105');
+            item.classList.remove('text-gray-400', 'text-gray-300');
+            if (item.classList.contains('bg-white')) {
+                item.classList.add('text-black');
+                item.classList.remove('text-white');
+            } else {
+                item.classList.add('text-white');
+            }
         }
 
         item.addEventListener('click', () => {
