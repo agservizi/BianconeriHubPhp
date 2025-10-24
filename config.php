@@ -2124,6 +2124,36 @@ function handleCommunityClipboardUpload(string $dataUrl, string $originalName = 
     ];
 }
 
+function communityMediaTableAvailable(?PDO $connection = null): bool
+{
+    static $cache;
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        $cache = false;
+        return $cache;
+    }
+
+    try {
+        $pdo->query('SELECT 1 FROM community_post_media LIMIT 1');
+        $cache = true;
+    } catch (PDOException $exception) {
+        $sqlState = $exception->getCode();
+        if ($sqlState === '42S02' || stripos($exception->getMessage(), 'community_post_media') !== false) {
+            $cache = false;
+        } else {
+            error_log('[BianconeriHub] Failed checking community_post_media availability: ' . $exception->getMessage());
+            $cache = false;
+        }
+    }
+
+    return $cache;
+}
+
 function addCommunityPost(int $userId, array $input, array $files = []): array
 {
     $message = trim((string) ($input['message'] ?? ''));
@@ -2194,9 +2224,20 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         }
     }
 
-    $maxAttachments = 4;
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
+    }
+
+    $mediaTableAvailable = communityMediaTableAvailable($pdo);
+    $maxAttachments = $mediaTableAvailable ? 4 : 1;
+
     $attachmentBuffer = count($existingMediaIds) + count($newUploadFiles) + ($clipboardData !== '' ? 1 : 0);
     if ($attachmentBuffer > $maxAttachments) {
+        if ($maxAttachments === 1) {
+            return ['success' => false, 'message' => 'Puoi allegare una sola immagine per post al momento.'];
+        }
+
         return ['success' => false, 'message' => 'Puoi allegare al massimo ' . $maxAttachments . ' immagini per post.'];
     }
 
@@ -2277,11 +2318,6 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         }
     }
 
-    $pdo = getDatabaseConnection();
-    if (!$pdo) {
-        return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
-    }
-
     $uploads = [];
     foreach ($newUploadFiles as $file) {
         $uploadResult = handleCommunityPhotoUpload($file);
@@ -2321,7 +2357,7 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         $scheduledFor = null;
     }
 
-    $existingMediaRecords = $existingPost['media'] ?? [];
+    $existingMediaRecords = $mediaTableAvailable ? ($existingPost['media'] ?? []) : [];
     $keptMedia = [];
     foreach ($existingMediaRecords as $record) {
         if (isset($existingMediaIds[$record['id']])) {
@@ -2363,7 +2399,7 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
     }
 
     $finalContentType = $mode;
-    if ($mode === 'photo' && $totalAttachments > 1) {
+    if ($mode === 'photo' && $totalAttachments > 1 && $mediaTableAvailable) {
         $finalContentType = 'gallery';
     }
 
@@ -2402,11 +2438,14 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         }
 
         foreach ($mediaToDelete as $record) {
-            $delete = $pdo->prepare('DELETE FROM community_post_media WHERE id = :id AND post_id = :post_id');
-            $delete->execute([
-                'id' => (int) $record['id'],
-                'post_id' => $postId,
-            ]);
+            if ($mediaTableAvailable) {
+                $delete = $pdo->prepare('DELETE FROM community_post_media WHERE id = :id AND post_id = :post_id');
+                $delete->execute([
+                    'id' => (int) $record['id'],
+                    'post_id' => $postId,
+                ]);
+            }
+
             if (!empty($record['path'])) {
                 deleteCommunityMediaFile($record['path']);
             }
@@ -2429,22 +2468,24 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
             ];
         }
 
-        foreach ($mediaOrder as $index => $mediaItem) {
-            if ($mediaItem['id'] > 0) {
-                $updatePosition = $pdo->prepare('UPDATE community_post_media SET position = :position WHERE id = :id AND post_id = :post_id');
-                $updatePosition->execute([
-                    'position' => $index,
-                    'id' => $mediaItem['id'],
-                    'post_id' => $postId,
-                ]);
-            } else {
-                $insertMedia = $pdo->prepare('INSERT INTO community_post_media (post_id, file_path, mime_type, position) VALUES (:post_id, :file_path, :mime_type, :position)');
-                $insertMedia->execute([
-                    'post_id' => $postId,
-                    'file_path' => $mediaItem['path'],
-                    'mime_type' => $mediaItem['mime'],
-                    'position' => $index,
-                ]);
+        if ($mediaTableAvailable) {
+            foreach ($mediaOrder as $index => $mediaItem) {
+                if ($mediaItem['id'] > 0) {
+                    $updatePosition = $pdo->prepare('UPDATE community_post_media SET position = :position WHERE id = :id AND post_id = :post_id');
+                    $updatePosition->execute([
+                        'position' => $index,
+                        'id' => $mediaItem['id'],
+                        'post_id' => $postId,
+                    ]);
+                } else {
+                    $insertMedia = $pdo->prepare('INSERT INTO community_post_media (post_id, file_path, mime_type, position) VALUES (:post_id, :file_path, :mime_type, :position)');
+                    $insertMedia->execute([
+                        'post_id' => $postId,
+                        'file_path' => $mediaItem['path'],
+                        'mime_type' => $mediaItem['mime'],
+                        'position' => $index,
+                    ]);
+                }
             }
         }
 
