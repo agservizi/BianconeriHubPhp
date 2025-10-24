@@ -266,6 +266,94 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    if ($formType === 'community_follow') {
+        $redirectUrl = '?page=community';
+        if (isset($_POST['redirect_to'])) {
+            $candidate = trim((string) $_POST['redirect_to']);
+            if ($candidate !== '' && !preg_match('/^https?:/i', $candidate)) {
+                if ($candidate[0] === '?') {
+                    $redirectUrl = $candidate;
+                } elseif ($candidate[0] === '#') {
+                    $redirectUrl .= $candidate;
+                }
+            }
+        }
+
+        if (!validateCsrfToken($_POST['_token'] ?? '')) {
+            setFlash('community', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if (!isUserLoggedIn()) {
+            setFlash('community', 'Effettua il login per gestire i tuoi seguiti.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $targetUserId = isset($_POST['user_id']) ? (int) $_POST['user_id'] : 0;
+        $action = strtolower(trim((string) ($_POST['follow_action'] ?? 'follow')));
+        $currentUser = getLoggedInUser();
+        $currentUserId = (int) ($currentUser['id'] ?? 0);
+
+        if ($targetUserId <= 0 || $currentUserId <= 0) {
+            setFlash('community', 'Utente non valido.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if ($targetUserId === $currentUserId) {
+            setFlash('community', 'Non puoi seguire te stesso.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        $targetUser = findUserById($targetUserId);
+        if (!$targetUser) {
+            setFlash('community', 'Tifoso non trovato.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        $targetName = $targetUser['username'] ?? 'tifoso';
+
+        if ($action !== 'unfollow') {
+            $result = followCommunityUser($targetUserId, $currentUserId);
+
+            if ($result['success']) {
+                $variant = ($result['state'] ?? '') === 'followed' ? 'success' : 'info';
+                $message = ($result['state'] ?? '') === 'followed'
+                    ? 'Ora segui ' . $targetName . '.'
+                    : 'Segui già ' . $targetName . '.';
+                setFlash('community', $message, $variant);
+            } else {
+                $message = $result['message'] ?? 'Impossibile aggiornare il seguito in questo momento.';
+                setFlash('community', $message, 'error');
+            }
+
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        $result = unfollowCommunityUser($targetUserId, $currentUserId);
+        if ($result['success']) {
+            $state = $result['state'] ?? '';
+            if ($state === 'unfollowed') {
+                $message = 'Hai smesso di seguire ' . $targetName . '.';
+                setFlash('community', $message, 'success');
+            } else {
+                $message = 'Non risultavi tra i follower di ' . $targetName . '.';
+                setFlash('community', $message, 'info');
+            }
+        } else {
+            $message = $result['message'] ?? 'Impossibile aggiornare il seguito in questo momento.';
+            setFlash('community', $message, 'error');
+        }
+
+        header('Location: ' . $redirectUrl);
+        exit;
+    }
+
     if ($formType === 'community_comment') {
         $postId = isset($_POST['post_id']) ? (int) $_POST['post_id'] : 0;
         $redirectUrl = '?page=community';

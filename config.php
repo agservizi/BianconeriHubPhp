@@ -1455,6 +1455,13 @@ function registerPushSubscription(int $userId, ?array $subscription, string $sco
         return ['success' => false, 'message' => 'Servizio notifiche non disponibile al momento.'];
     }
 
+    if ($scopeValue === 'following') {
+        $followingCount = getCommunityFollowingCount($userId, $pdo);
+        if ($followingCount <= 0) {
+            return ['success' => false, 'message' => 'Segui almeno un tifoso per attivare le notifiche mirate.'];
+        }
+    }
+
     try {
         $pdo->beginTransaction();
 
@@ -1580,6 +1587,125 @@ function getCommunityFollowersIds(int $userId): array
     }
 
     return [];
+}
+
+function isCommunityFollower(int $userId, int $followerId): bool
+{
+    if ($userId <= 0 || $followerId <= 0) {
+        return false;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return false;
+    }
+
+    try {
+        $check = $pdo->prepare('SELECT 1 FROM community_followers WHERE user_id = :user AND follower_id = :follower LIMIT 1');
+        $check->execute([
+            'user' => $userId,
+            'follower' => $followerId,
+        ]);
+
+        return (bool) $check->fetchColumn();
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to verify community follower: ' . $exception->getMessage());
+    }
+
+    return false;
+}
+
+function followCommunityUser(int $userId, int $followerId): array
+{
+    if ($userId <= 0 || $followerId <= 0) {
+        return ['success' => false, 'message' => 'Utenti non validi.'];
+    }
+
+    if ($userId === $followerId) {
+        return ['success' => false, 'message' => 'Non puoi seguire te stesso.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio non disponibile.'];
+    }
+
+    try {
+        $insert = $pdo->prepare('INSERT IGNORE INTO community_followers (user_id, follower_id) VALUES (:user_id, :follower_id)');
+        $insert->execute([
+            'user_id' => $userId,
+            'follower_id' => $followerId,
+        ]);
+
+        $state = $insert->rowCount() === 1 ? 'followed' : 'already_following';
+
+        return [
+            'success' => true,
+            'state' => $state,
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to follow community user: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'message' => 'Impossibile seguire questo tifoso al momento.'];
+}
+
+function unfollowCommunityUser(int $userId, int $followerId): array
+{
+    if ($userId <= 0 || $followerId <= 0) {
+        return ['success' => false, 'message' => 'Utenti non validi.'];
+    }
+
+    if ($userId === $followerId) {
+        return ['success' => false, 'message' => 'Non puoi smettere di seguire te stesso.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio non disponibile.'];
+    }
+
+    try {
+        $delete = $pdo->prepare('DELETE FROM community_followers WHERE user_id = :user_id AND follower_id = :follower_id');
+        $delete->execute([
+            'user_id' => $userId,
+            'follower_id' => $followerId,
+        ]);
+
+        $state = $delete->rowCount() > 0 ? 'unfollowed' : 'not_following';
+
+        return [
+            'success' => true,
+            'state' => $state,
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to unfollow community user: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'message' => 'Impossibile aggiornare il seguito in questo momento.'];
+}
+
+function getCommunityFollowingCount(int $followerId, ?PDO $connection = null): int
+{
+    if ($followerId <= 0) {
+        return 0;
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        return 0;
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT COUNT(*) FROM community_followers WHERE follower_id = :follower');
+        $statement->execute(['follower' => $followerId]);
+
+        return (int) ($statement->fetchColumn() ?: 0);
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to count community followings: ' . $exception->getMessage());
+    }
+
+    return 0;
 }
 
 function getPushSubscriptionsForPost(int $authorId): array
@@ -2192,9 +2318,13 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                 EXISTS(
                     SELECT 1 FROM community_post_reactions r2
                     WHERE r2.post_id = p.id AND r2.user_id = :current_user_support AND r2.reaction_type = "support"
-                ) AS has_supported';
+                ) AS has_supported,
+                EXISTS(
+                    SELECT 1 FROM community_followers f
+                    WHERE f.user_id = p.user_id AND f.follower_id = :current_user_follow
+                ) AS is_following_author';
     } else {
-        $sql .= ', 0 AS has_liked, 0 AS has_supported';
+        $sql .= ', 0 AS has_liked, 0 AS has_supported, 0 AS is_following_author';
     }
 
     $sql .= ' FROM community_posts p
@@ -2214,6 +2344,7 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
         if ($currentUserId > 0) {
             $statement->bindValue(':current_user_like', $currentUserId, PDO::PARAM_INT);
             $statement->bindValue(':current_user_support', $currentUserId, PDO::PARAM_INT);
+            $statement->bindValue(':current_user_follow', $currentUserId, PDO::PARAM_INT);
         }
         $statement->execute();
 
@@ -2238,9 +2369,13 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                 }
             }
 
+            $authorId = (int) ($row['user_id'] ?? 0);
+            $canFollow = $currentUserId > 0 && $currentUserId !== $authorId;
+            $isFollowingAuthor = ((int) ($row['is_following_author'] ?? 0)) === 1;
+
             $rawPosts[] = [
                 'id' => (int) ($row['id'] ?? 0),
-                'user_id' => (int) ($row['user_id'] ?? 0),
+                'user_id' => $authorId,
                 'author' => $row['username'] ?? 'Tifoso',
                 'badge' => $row['badge'] ?? 'Tifoso',
                 'content' => $row['content'] ?? '',
@@ -2258,6 +2393,8 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                 'comments_count' => (int) ($row['comments_count'] ?? 0),
                 'has_liked' => ((int) ($row['has_liked'] ?? 0)) === 1,
                 'has_supported' => ((int) ($row['has_supported'] ?? 0)) === 1,
+                'viewer_can_follow' => $canFollow,
+                'is_following_author' => $canFollow ? $isFollowingAuthor : false,
             ];
         }
 

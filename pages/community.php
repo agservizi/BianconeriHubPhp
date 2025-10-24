@@ -98,6 +98,11 @@ $nextFeedOffset = count($posts);
 $maxComposerAttachments = communityMediaTableAvailable() ? 4 : 1;
 $pushNotificationsEnabled = $isLoggedIn && isWebPushConfigured();
 $pushPublicKey = $pushNotificationsEnabled ? getPushVapidPublicKey() : '';
+$pushFollowingCount = 0;
+if ($pushNotificationsEnabled && $loggedUser) {
+    $pushFollowingCount = getCommunityFollowingCount((int) ($loggedUser['id'] ?? 0));
+}
+$pushHasFollowing = $pushFollowingCount > 0;
 ?>
 <section class="mx-auto max-w-6xl px-2 sm:px-4 lg:px-0">
     <div class="grid gap-6 lg:grid-cols-[18rem,minmax(0,1fr),20rem]">
@@ -362,6 +367,7 @@ $pushPublicKey = $pushNotificationsEnabled ? getPushVapidPublicKey() : '';
                 data-push-endpoint="scripts/push_subscriptions.php"
                 data-push-public-key="<?php echo htmlspecialchars($pushPublicKey, ENT_QUOTES, 'UTF-8'); ?>"
                 data-push-token="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>"
+                data-push-following-available="<?php echo $pushHasFollowing ? '1' : '0'; ?>"
             >
                 <div class="space-y-2">
                     <h2 class="text-sm font-semibold uppercase tracking-wide text-gray-400">Notifiche push</h2>
@@ -381,9 +387,12 @@ $pushPublicKey = $pushNotificationsEnabled ? getPushVapidPublicKey() : '';
                         <span>Tutta la community</span>
                     </label>
                     <label class="flex items-center gap-2">
-                        <input type="radio" name="push-scope" value="following" class="h-4 w-4 rounded-full border-white/20 bg-black/50">
+                        <input type="radio" name="push-scope" value="following" class="h-4 w-4 rounded-full border-white/20 bg-black/50"<?php echo $pushHasFollowing ? '' : ' disabled'; ?>>
                         <span>Solo gli utenti che seguo</span>
                     </label>
+                    <?php if (!$pushHasFollowing): ?>
+                        <p class="text-[0.65rem] text-gray-500">Segui almeno un tifoso per abilitare questa opzione.</p>
+                    <?php endif; ?>
                 </div>
                 <p class="hidden text-xs text-yellow-400" data-push-unsupported>Il tuo browser non supporta le notifiche push.</p>
                 <p class="hidden text-xs text-gray-400" data-push-status></p>

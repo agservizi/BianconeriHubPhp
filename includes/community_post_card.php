@@ -4,6 +4,16 @@ if ($postId <= 0) {
     return;
 }
 
+$authorId = (int) ($post['user_id'] ?? 0);
+$viewerCanFollow = !empty($post['viewer_can_follow']);
+$isFollowingAuthor = !empty($post['is_following_author']);
+$followRedirect = '?page=community#post-' . $postId;
+$followAction = $isFollowingAuthor ? 'unfollow' : 'follow';
+$followLabel = $isFollowingAuthor ? 'Smetti di seguire' : 'Segui';
+$followButtonClasses = $isFollowingAuthor
+    ? 'inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1.5 text-[0.65rem] font-semibold text-white transition-all hover:bg-white hover:text-black'
+    : 'inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-[0.65rem] font-semibold text-black transition-all hover:bg-juventus-silver';
+
 $comments = getCommunityComments($postId, 20);
 $likeCount = number_format($post['likes_count'] ?? 0, 0, ',', '.');
 $supportCount = number_format($post['supports_count'] ?? 0, 0, ',', '.');
@@ -18,7 +28,7 @@ $pollOptions = is_array($post['poll_options'] ?? null) ? $post['poll_options'] :
 $commentPrefill = ($oldCommentPostId === $postId) ? $oldCommentBody : '';
 ?>
 <article id="post-<?php echo $postId; ?>" class="fan-card px-5 py-6 space-y-4" data-community-post>
-    <div class="flex items-center justify-between text-xs uppercase tracking-wide text-gray-500">
+    <div class="flex flex-col gap-2 text-xs uppercase tracking-wide text-gray-500 sm:flex-row sm:items-center sm:justify-between">
         <div class="flex items-center gap-2">
             <div class="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xs font-semibold text-white">
                 <?php echo strtoupper(substr($post['author'] ?? 'BH', 0, 2)); ?>
@@ -37,7 +47,21 @@ $commentPrefill = ($oldCommentPostId === $postId) ? $oldCommentBody : '';
                 <?php endif; ?>
             </div>
         </div>
-        <span><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
+        <div class="flex items-center justify-end gap-3 sm:justify-end">
+            <?php if ($viewerCanFollow): ?>
+                <form method="post" class="inline">
+                    <input type="hidden" name="form_type" value="community_follow">
+                    <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
+                    <input type="hidden" name="user_id" value="<?php echo $authorId; ?>">
+                    <input type="hidden" name="follow_action" value="<?php echo htmlspecialchars($followAction, ENT_QUOTES, 'UTF-8'); ?>">
+                    <input type="hidden" name="redirect_to" value="<?php echo htmlspecialchars($followRedirect, ENT_QUOTES, 'UTF-8'); ?>">
+                    <button type="submit" class="<?php echo $followButtonClasses; ?>">
+                        <?php echo htmlspecialchars($followLabel, ENT_QUOTES, 'UTF-8'); ?>
+                    </button>
+                </form>
+            <?php endif; ?>
+            <span class="text-right"><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
+        </div>
     </div>
     <?php if (!empty($mediaItems)): ?>
         <?php if (count($mediaItems) === 1):

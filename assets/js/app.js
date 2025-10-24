@@ -696,6 +696,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const endpoint = container.dataset.pushEndpoint || '';
         const publicKey = container.dataset.pushPublicKey || '';
         const csrfToken = container.dataset.pushToken || '';
+        const hasFollowing = container.dataset.pushFollowingAvailable === '1';
         const enableButton = container.querySelector('[data-push-enable]');
         const disableButton = container.querySelector('[data-push-disable]');
         const scopeInputs = Array.from(container.querySelectorAll('input[name="push-scope"]'));
@@ -731,7 +732,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (enabled) {
                     window.localStorage.setItem(localEnabledKey, '1');
                     if (scope) {
-                        window.localStorage.setItem(localScopeKey, scope);
+                        const normalizedScope = scope === 'following' && !hasFollowing ? 'global' : scope;
+                        window.localStorage.setItem(localScopeKey, normalizedScope);
                     }
                 } else {
                     window.localStorage.removeItem(localEnabledKey);
@@ -750,7 +752,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const getSelectedScope = () => {
-            const active = scopeInputs.find((input) => input.checked);
+            const active = scopeInputs.find((input) => input.checked && !input.disabled);
             return active ? active.value : 'global';
         };
 
@@ -758,6 +760,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const stored = loadStoredScope();
             let matched = false;
             scopeInputs.forEach((input) => {
+                if (input.disabled) {
+                    input.checked = false;
+                    return;
+                }
                 if (input.value === stored) {
                     input.checked = true;
                     matched = true;
@@ -859,6 +865,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 const scope = getSelectedScope();
+                if (scope === 'following' && !hasFollowing) {
+                    setStatus('Segui almeno un tifoso per attivare le notifiche mirate.');
+                    toggleButtons(false);
+                    storeState(false);
+                    isProcessing = false;
+                    return;
+                }
                 const response = await sendRequest(updateOnly ? 'update' : 'subscribe', {
                     scope,
                     subscription: subscription ? subscription.toJSON() : null,
@@ -878,6 +891,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setStatus(error.message || 'Impossibile completare la richiesta.');
                 if (!updateOnly) {
                     toggleButtons(false);
+                    storeState(false);
                 }
             } finally {
                 isProcessing = false;
