@@ -88,7 +88,6 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                         <?php if ($loggedUser): ?>
                             <div class="text-right">
                                 <p class="text-sm font-semibold">Ciao, <?php echo htmlspecialchars($loggedUser['username'], ENT_QUOTES, 'UTF-8'); ?></p>
-                                <p class="text-xs uppercase tracking-wide text-gray-400"><?php echo htmlspecialchars($loggedUser['badge'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8'); ?></p>
                             </div>
                             <a href="?action=logout" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-white hover:text-black">
                                 Logout
@@ -112,9 +111,6 @@ $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato
                         </a>
                     </div>
                     <div class="flex items-center gap-2 md:hidden">
-                        <?php if ($loggedUser): ?>
-                            <span class="text-xs font-semibold uppercase tracking-wide text-white/70"><?php echo htmlspecialchars($loggedUser['badge'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8'); ?></span>
-                        <?php endif; ?>
                         <button type="button" class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/30 text-white transition-all hover:border-white/60 hover:bg-white/10" data-mobile-nav-toggle aria-expanded="false">
                             <span class="sr-only">Apri menu di navigazione</span>
                             <svg data-menu-icon="open" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
