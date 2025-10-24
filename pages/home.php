@@ -100,9 +100,9 @@ for ($index = 0; $index < $maxItems; $index++) {
                     <h1 class="text-lg font-semibold text-white">Raccolta Storie Bianconere</h1>
                     <a href="?page=community" class="text-xs uppercase tracking-wide text-gray-400 hover:text-white">Vedi tutto</a>
                 </div>
-                <div class="flex gap-3 overflow-x-auto scrollbar-hide pb-1">
+                <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                     <?php foreach ($fanSpotlight as $item): ?>
-                        <article class="relative w-32 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-black/40">
+                        <article class="relative overflow-hidden rounded-2xl border border-white/10 bg-black/40">
                             <img src="<?php echo htmlspecialchars($item['image'], ENT_QUOTES, 'UTF-8'); ?>" alt="<?php echo htmlspecialchars($item['title'], ENT_QUOTES, 'UTF-8'); ?>" class="h-36 w-full object-cover">
                             <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-3 py-2">
                                 <p class="text-xs font-semibold text-white line-clamp-2"><?php echo htmlspecialchars($item['title'], ENT_QUOTES, 'UTF-8'); ?></p>
@@ -110,7 +110,7 @@ for ($index = 0; $index < $maxItems; $index++) {
                         </article>
                     <?php endforeach; ?>
                     <?php foreach ($upcomingMatches as $match): ?>
-                        <article class="relative w-32 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/15 to-white/0 p-4">
+                        <article class="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/15 to-white/0 p-4">
                             <p class="text-[0.65rem] font-semibold uppercase tracking-wide text-gray-300">Matchday</p>
                             <p class="mt-1 text-sm font-bold text-white">Juventus vs <?php echo htmlspecialchars($match['opponent'], ENT_QUOTES, 'UTF-8'); ?></p>
                             <p class="mt-3 text-[0.65rem] text-gray-400"><?php echo htmlspecialchars($match['date'], ENT_QUOTES, 'UTF-8'); ?></p>
