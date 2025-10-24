@@ -35,6 +35,13 @@ foreach ($oldPollOptionsInput as $optionValue) {
 }
 $oldPollOptions = array_slice($oldPollOptions, 0, 4);
 $oldPollOptions = array_pad($oldPollOptions, 4, '');
+$oldComposerAction = strtolower((string) getOldInput('composer_action', 'publish'));
+if (!in_array($oldComposerAction, ['publish', 'schedule', 'draft'], true)) {
+    $oldComposerAction = 'publish';
+}
+$oldScheduleAt = (string) getOldInput('schedule_at', '');
+$oldDraftId = (int) getOldInput('draft_id', 0);
+$maxComposerAttachments = communityMediaTableAvailable() ? 4 : 1;
 ?>
 <section class="mx-auto max-w-6xl px-2 sm:px-4 lg:px-0">
     <div class="grid gap-6 lg:grid-cols-[18rem,minmax(0,1fr),20rem]">
@@ -100,10 +107,12 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                             <span class="text-xs uppercase tracking-wide text-gray-500"><?php echo htmlspecialchars($stats['posts'] > 0 ? 'Thread attivi ' . number_format($stats['posts'], 0, ',', '.') : 'Thread in partenza', ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                         <?php if ($isLoggedIn && $loggedUser): ?>
-                            <form action="" method="post" enctype="multipart/form-data" class="mt-3 space-y-3" data-community-composer>
+                            <form action="" method="post" enctype="multipart/form-data" class="mt-3 space-y-4" data-community-composer data-composer-max-attachments="<?php echo (int) $maxComposerAttachments; ?>">
                                 <input type="hidden" name="form_type" value="community_post">
                                 <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
                                 <input type="hidden" name="composer_mode" value="<?php echo htmlspecialchars($oldComposerMode, ENT_QUOTES, 'UTF-8'); ?>" data-composer-mode-input>
+                                <input type="hidden" name="composer_action" value="<?php echo htmlspecialchars($oldComposerAction, ENT_QUOTES, 'UTF-8'); ?>" data-composer-action-input>
+                                <input type="hidden" name="draft_id" value="<?php echo $oldDraftId; ?>" data-composer-draft-id>
                                 <textarea
                                     name="message"
                                     rows="4"
@@ -114,7 +123,7 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                                     data-placeholder-photo="Aggiungi una descrizione alla foto bianconera che vuoi condividere..."
                                     data-placeholder-poll="Spiega il contesto del sondaggio o aggiungi un commento iniziale..."
                                 ><?php echo htmlspecialchars($oldMessage, ENT_QUOTES, 'UTF-8'); ?></textarea>
-                                <div class="flex flex-wrap items-center justify-between gap-3">
+                                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
                                         <?php
                                         $composerModes = [
@@ -130,22 +139,44 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                                             </button>
                                         <?php endforeach; ?>
                                     </div>
-                                    <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-all hover:bg-juventus-silver">
-                                        Pubblica
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-4 w-4">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 12h12m-6-6v12" />
-                                        </svg>
-                                    </button>
+                                    <div class="flex flex-wrap items-center gap-2 text-xs text-gray-400" data-composer-action-buttons>
+                                        <?php
+                                        $composerActions = [
+                                            'publish' => 'Pubblica subito',
+                                            'schedule' => 'Programma',
+                                            'draft' => 'Salva bozza',
+                                        ];
+                                        foreach ($composerActions as $actionKey => $actionLabel):
+                                            $isActive = $oldComposerAction === $actionKey ? ' composer-action-active' : '';
+                                        ?>
+                                            <button type="button" class="timeline-pill composer-action-button<?php echo $isActive; ?>" data-composer-action="<?php echo htmlspecialchars($actionKey, ENT_QUOTES, 'UTF-8'); ?>">
+                                                <?php echo $actionLabel; ?>
+                                            </button>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                                <div class="<?php echo $oldComposerAction === 'schedule' ? '' : 'hidden'; ?> rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-xs text-gray-200" data-composer-schedule-wrapper>
+                                    <label for="composer-schedule" class="font-semibold uppercase tracking-wide text-gray-400">Data e ora di pubblicazione</label>
+                                    <input
+                                        type="datetime-local"
+                                        id="composer-schedule"
+                                        name="schedule_at"
+                                        value="<?php echo htmlspecialchars($oldScheduleAt, ENT_QUOTES, 'UTF-8'); ?>"
+                                        class="mt-2 w-full rounded-xl border border-white/10 bg-black/60 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-white"
+                                        data-composer-schedule-input
+                                    >
+                                    <p class="mt-2 text-[0.65rem] uppercase tracking-wide text-gray-500">Programma con almeno cinque minuti di anticipo.</p>
                                 </div>
                                 <div class="space-y-3 <?php echo $oldComposerMode === 'photo' ? '' : 'hidden'; ?>" data-composer-photo-section>
                                     <div class="space-y-2">
-                                        <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400">Carica immagine</label>
+                                        <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400">Carica immagini</label>
                                         <input
                                             type="file"
-                                            name="media_file"
+                                            name="media_files[]"
                                             accept="image/png,image/jpeg,image/webp,image/gif"
                                             class="hidden"
                                             data-composer-photo-file
+                                            <?php echo $maxComposerAttachments > 1 ? 'multiple' : ''; ?>
                                         >
                                         <input type="hidden" name="media_clipboard" value="" data-composer-photo-clipboard>
                                         <input type="hidden" name="media_clipboard_name" value="" data-composer-photo-clipboard-name>
@@ -156,23 +187,33 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5v-9m0 0-3 3m3-3 3 3M6 19.5h12a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 18 4.5H6A2.25 2.25 0 0 0 3.75 6.75V17.25A2.25 2.25 0 0 0 6 19.5Z" />
                                                 </svg>
                                             </button>
-                                            <p class="text-xs text-gray-500" data-composer-photo-hint>Puoi anche incollare un’immagine direttamente dagli appunti.</p>
+                                            <p class="text-xs text-gray-500" data-composer-photo-hint>
+                                                <?php if ($maxComposerAttachments > 1): ?>
+                                                    Puoi allegare fino a <?php echo (int) $maxComposerAttachments; ?> immagini e incollare direttamente dagli appunti.
+                                                <?php else: ?>
+                                                    Al momento puoi allegare una sola immagine oppure incollarne una dagli appunti.
+                                                <?php endif; ?>
+                                            </p>
                                         </div>
                                     </div>
+                                    <p class="hidden text-xs text-yellow-400" data-composer-photo-error></p>
                                     <div class="hidden rounded-2xl border border-white/10 bg-black/40 p-3" data-composer-photo-preview-wrapper>
-                                        <div class="overflow-hidden rounded-xl border border-white/10">
-                                            <img src="" alt="Anteprima immagine caricata" class="max-h-64 w-full object-cover" data-composer-photo-preview>
-                                        </div>
-                                        <div class="mt-3 flex flex-col gap-2 text-xs text-gray-400 sm:flex-row sm:items-center sm:justify-between">
-                                            <span class="truncate" data-composer-photo-name></span>
-                                            <button type="button" class="inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1 font-semibold text-white transition-all hover:bg-white hover:text-black" data-composer-photo-clear>
-                                                Rimuovi immagine
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-3 w-3">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6m0 12L6 6" />
-                                                </svg>
-                                            </button>
-                                        </div>
+                                        <div class="grid gap-3 sm:grid-cols-2" data-composer-photo-previews></div>
                                     </div>
+                                    <template data-composer-photo-template>
+                                        <div class="relative overflow-hidden rounded-xl border border-white/10 bg-black/60">
+                                            <img src="" alt="Anteprima immagine" class="h-40 w-full object-cover" data-composer-photo-preview>
+                                            <div class="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-black/70 px-3 py-2 text-xs">
+                                                <div class="flex flex-col">
+                                                    <span class="font-semibold text-white" data-composer-photo-name></span>
+                                                    <span class="text-[0.65rem] uppercase tracking-wide text-gray-400" data-composer-photo-origin></span>
+                                                </div>
+                                                <button type="button" class="inline-flex items-center gap-1 rounded-full border border-white/30 px-3 py-1 text-[0.65rem] font-semibold text-white transition-all hover:bg-white hover:text-black" data-composer-photo-remove>
+                                                    Rimuovi
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </template>
                                 </div>
                                 <div class="space-y-3 <?php echo $oldComposerMode === 'poll' ? '' : 'hidden'; ?>" data-composer-poll-section>
                                     <div class="space-y-2">
@@ -202,6 +243,18 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                                         <p class="text-xs text-gray-500">Suggerimento: mantieni le risposte concise (es. “4-3-3 offensivo”).</p>
                                     </div>
                                 </div>
+                                <div class="flex justify-end">
+                                    <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-all hover:bg-juventus-silver" data-composer-submit>
+                                        <span data-composer-submit-label>
+                                            <?php
+                                            echo $oldComposerAction === 'draft' ? 'Salva bozza' : ($oldComposerAction === 'schedule' ? 'Programma' : 'Pubblica');
+                                            ?>
+                                        </span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-4 w-4">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 12h12m-6-6v12" />
+                                        </svg>
+                                    </button>
+                                </div>
                             </form>
                         <?php else: ?>
                             <div class="mt-3 space-y-2">
@@ -223,6 +276,7 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                     $isActiveCommentForm = $oldCommentPostId === ($post['id'] ?? 0);
                     $commentPrefill = $isActiveCommentForm ? $oldCommentBody : '';
                     $contentType = $post['content_type'] ?? 'text';
+                    $mediaItems = is_array($post['media'] ?? null) ? $post['media'] : [];
                     $mediaUrl = trim((string) ($post['media_url'] ?? ''));
                     $pollQuestion = trim((string) ($post['poll_question'] ?? ''));
                     $pollOptions = is_array($post['poll_options'] ?? null) ? $post['poll_options'] : [];
@@ -240,6 +294,8 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                                     <?php endif; ?>
                                     <?php if ($contentType === 'photo'): ?>
                                         <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Foto</span>
+                                    <?php elseif ($contentType === 'gallery'): ?>
+                                        <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Gallery</span>
                                     <?php elseif ($contentType === 'poll'): ?>
                                         <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Sondaggio</span>
                                     <?php endif; ?>
@@ -247,7 +303,30 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                             </div>
                             <span><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
-                        <?php if ($contentType === 'photo' && $mediaUrl !== ''): ?>
+                        <?php if (!empty($mediaItems)): ?>
+                            <?php if (count($mediaItems) === 1):
+                                $singleMedia = $mediaItems[0];
+                                $singlePath = htmlspecialchars($singleMedia['path'] ?? $mediaUrl, ENT_QUOTES, 'UTF-8');
+                            ?>
+                                <div class="overflow-hidden rounded-2xl border border-white/10">
+                                    <img src="<?php echo $singlePath; ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-64 w-full object-cover">
+                                </div>
+                            <?php else: ?>
+                                <div class="grid gap-2 sm:grid-cols-2">
+                                    <?php foreach ($mediaItems as $index => $media):
+                                        $mediaPath = htmlspecialchars($media['path'] ?? '', ENT_QUOTES, 'UTF-8');
+                                        if ($mediaPath === '') {
+                                            continue;
+                                        }
+                                    ?>
+                                        <div class="relative overflow-hidden rounded-2xl border border-white/10">
+                                            <img src="<?php echo $mediaPath; ?>" alt="Immagine <?php echo $index + 1; ?> condivisa da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-48 w-full object-cover">
+                                            <span class="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-1 text-[0.55rem] font-semibold uppercase tracking-wide text-white">Foto <?php echo $index + 1; ?></span>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                        <?php elseif ($contentType === 'photo' && $mediaUrl !== ''): ?>
                             <div class="overflow-hidden rounded-2xl border border-white/10">
                                 <img src="<?php echo htmlspecialchars($mediaUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-64 w-full object-cover">
                             </div>
@@ -270,7 +349,7 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
                         <?php endif; ?>
 
                         <?php if (trim((string) $post['content']) !== ''): ?>
-                            <p class="text-sm text-gray-200 leading-relaxed"><?php echo nl2br(htmlspecialchars($post['content'], ENT_QUOTES, 'UTF-8')); ?></p>
+                            <div class="text-sm text-gray-200 leading-relaxed"><?php echo $post['content_rendered']; ?></div>
                         <?php endif; ?>
                         <div class="flex flex-wrap items-center gap-3 text-xs uppercase tracking-wide text-gray-500">
                             <?php if ($isLoggedIn):

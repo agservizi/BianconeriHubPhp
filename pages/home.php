@@ -169,6 +169,7 @@ for ($index = 0; $index < $maxItems; $index++) {
                     $commentCount = number_format($post['comments_count'] ?? 0, 0, ',', '.');
                     $supportCount = number_format($post['supports_count'] ?? 0, 0, ',', '.');
                     $contentType = $post['content_type'] ?? 'text';
+                    $mediaItems = is_array($post['media'] ?? null) ? $post['media'] : [];
                     $mediaUrl = trim((string) ($post['media_url'] ?? ''));
                     $pollQuestion = trim((string) ($post['poll_question'] ?? ''));
                     $pollOptions = is_array($post['poll_options'] ?? null) ? $post['poll_options'] : [];
@@ -177,6 +178,13 @@ for ($index = 0; $index < $maxItems; $index++) {
                         <div class="flex items-center justify-between text-xs uppercase tracking-wide text-gray-500">
                             <div class="flex items-center gap-2">
                                 <span class="timeline-pill">Community</span>
+                                <?php if ($contentType === 'photo'): ?>
+                                    <span class="text-gray-300">Foto</span>
+                                <?php elseif ($contentType === 'gallery'): ?>
+                                    <span class="text-gray-300">Gallery</span>
+                                <?php elseif ($contentType === 'poll'): ?>
+                                    <span class="text-gray-300">Sondaggio</span>
+                                <?php endif; ?>
                                 <?php if (!empty($post['badge'])): ?>
                                     <span class="text-gray-300"><?php echo htmlspecialchars($post['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
                                 <?php endif; ?>
@@ -184,7 +192,21 @@ for ($index = 0; $index < $maxItems; $index++) {
                             <span><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                         <h3 class="text-sm font-semibold text-white"><?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?></h3>
-                        <?php if ($contentType === 'photo' && $mediaUrl !== ''): ?>
+                        <?php if (!empty($mediaItems)): ?>
+                            <?php
+                            $firstMedia = $mediaItems[0] ?? [];
+                            $firstPath = htmlspecialchars($firstMedia['path'] ?? $mediaUrl, ENT_QUOTES, 'UTF-8');
+                            $remainingMedia = count($mediaItems) - 1;
+                            ?>
+                            <?php if ($firstPath !== ''): ?>
+                                <div class="relative overflow-hidden rounded-2xl border border-white/10">
+                                    <img src="<?php echo $firstPath; ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-56 w-full object-cover">
+                                    <?php if ($remainingMedia > 0): ?>
+                                        <span class="absolute right-2 top-2 rounded-full bg-black/70 px-2 py-1 text-[0.6rem] font-semibold uppercase tracking-wide text-white">+<?php echo $remainingMedia; ?> foto</span>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endif; ?>
+                        <?php elseif ($contentType === 'photo' && $mediaUrl !== ''): ?>
                             <div class="overflow-hidden rounded-2xl border border-white/10">
                                 <img src="<?php echo htmlspecialchars($mediaUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-56 w-full object-cover">
                             </div>
@@ -206,7 +228,7 @@ for ($index = 0; $index < $maxItems; $index++) {
                         <?php endif; ?>
 
                         <?php if (trim((string) $post['content']) !== ''): ?>
-                            <p class="text-sm text-gray-300 leading-relaxed"><?php echo htmlspecialchars($post['content'], ENT_QUOTES, 'UTF-8'); ?></p>
+                            <div class="text-sm text-gray-300 leading-relaxed"><?php echo $post['content_rendered']; ?></div>
                         <?php endif; ?>
                         <div class="flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
                             <a href="?page=community#post-<?php echo (int) $post['id']; ?>" class="inline-flex items-center gap-1 hover:text-white transition-all">

@@ -141,6 +141,17 @@ body::after {
         border-color: rgba(255, 255, 255, 0.9);
         box-shadow: 0 10px 30px rgba(255, 255, 255, 0.18);
     }
+
+    .composer-action-button {
+        cursor: pointer;
+    }
+
+    .composer-action-button.composer-action-active {
+        background: rgba(255, 255, 255, 0.15);
+        color: #ffffff;
+        border-color: rgba(255, 255, 255, 0.45);
+        box-shadow: 0 10px 30px rgba(255, 255, 255, 0.12);
+    }
 }
 
 @layer utilities {
