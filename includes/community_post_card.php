@@ -204,9 +204,9 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
             : '';
         $createdAt = htmlspecialchars(getHumanTimeDiff($comment['created_at'] ?? time()), ENT_QUOTES, 'UTF-8');
         $contentHtml = nl2br(htmlspecialchars((string) ($comment['content'] ?? ''), ENT_QUOTES, 'UTF-8'));
-        $likesCount = number_format((int) ($comment['likes'] ?? 0), 0, ',', '.');
-        $hasLiked = !empty($comment['has_liked']);
-        $likeButtonClasses = $hasLiked ? 'text-white' : 'hover:text-white';
+    $likesCountRaw = (int) ($comment['likes'] ?? 0);
+    $likesCountFormatted = number_format($likesCountRaw, 0, ',', '.');
+    $hasLiked = !empty($comment['has_liked']);
         $replies = is_array($comment['replies'] ?? null) ? $comment['replies'] : [];
         $replyOpen = $replyPrefillId === $commentId;
         $replyValue = $replyOpen ? $replyPrefillBody : '';
@@ -228,19 +228,19 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
             <p class="text-sm text-gray-200 leading-relaxed"><?php echo $contentHtml; ?></p>
             <div class="flex flex-wrap items-center gap-3 text-xs uppercase tracking-wide text-gray-500">
                 <?php if ($isLoggedIn): ?>
-                    <form method="post" class="inline">
+                    <form method="post" class="inline" data-comment-like-form data-comment-id="<?php echo $commentId; ?>" data-comment-like-endpoint="scripts/comment_like_toggle.php">
                         <input type="hidden" name="form_type" value="community_comment_reaction">
                         <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
                         <input type="hidden" name="comment_id" value="<?php echo $commentId; ?>">
                         <input type="hidden" name="redirect_to" value="<?php echo htmlspecialchars($commentAnchor, ENT_QUOTES, 'UTF-8'); ?>">
-                        <button type="submit" class="inline-flex items-center gap-1 transition-all <?php echo $likeButtonClasses; ?>">
-                            <span class="font-semibold text-white/80"><?php echo $likesCount; ?></span>
+                        <button type="submit" class="inline-flex items-center gap-1 transition-all hover:text-white<?php echo $hasLiked ? ' text-white' : ''; ?>" data-comment-like-button data-comment-like-state="<?php echo $hasLiked ? 'liked' : 'unliked'; ?>" aria-pressed="<?php echo $hasLiked ? 'true' : 'false'; ?>">
+                            <span class="font-semibold text-white/80" data-comment-like-count data-comment-like-count-value="<?php echo $likesCountRaw; ?>"><?php echo $likesCountFormatted; ?></span>
                             <span>Mi piace</span>
                         </button>
                     </form>
                 <?php else: ?>
                     <a href="?page=login" class="inline-flex items-center gap-1 transition-all hover:text-white">
-                        <span class="font-semibold text-white/80"><?php echo $likesCount; ?></span>
+                        <span class="font-semibold text-white/80"><?php echo $likesCountFormatted; ?></span>
                         <span>Mi piace</span>
                     </a>
                 <?php endif; ?>

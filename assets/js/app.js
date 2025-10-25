@@ -1145,6 +1145,119 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    const initCommentLikeEnhancements = () => {
+        const numberFormatter = typeof Intl !== 'undefined'
+            ? new Intl.NumberFormat('it-IT')
+            : null;
+
+        const isFiniteNumber = (value) => {
+            if (typeof Number.isFinite === 'function') {
+                return Number.isFinite(value);
+            }
+            return isFinite(value);
+        };
+
+        const formatCount = (value) => {
+            const numericValue = isFiniteNumber(value) ? value : parseInt(String(value || '0'), 10);
+            if (numberFormatter) {
+                return numberFormatter.format(isFiniteNumber(numericValue) ? numericValue : 0);
+            }
+            return String(isFiniteNumber(numericValue) ? numericValue : 0);
+        };
+
+        const toggleCommentLike = async (form) => {
+            if (!(form instanceof HTMLFormElement) || form.dataset.commentLikeBusy === '1') {
+                return;
+            }
+
+            const endpoint = form.dataset.commentLikeEndpoint || form.getAttribute('action') || '';
+            const button = form.querySelector('[data-comment-like-button]');
+            const countElement = form.querySelector('[data-comment-like-count]');
+
+            if (!endpoint || !button || !countElement) {
+                form.dataset.commentLikeFallback = '1';
+                window.setTimeout(() => {
+                    form.submit();
+                }, 0);
+                return;
+            }
+
+            form.dataset.commentLikeBusy = '1';
+            button.setAttribute('aria-busy', 'true');
+
+            try {
+                const formData = new FormData(form);
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    credentials: 'same-origin',
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401 || response.status === 419) {
+                        form.dataset.commentLikeFallback = '1';
+                        window.setTimeout(() => {
+                            form.submit();
+                        }, 0);
+                        return;
+                    }
+                    throw new Error(`Unexpected response (${response.status})`);
+                }
+
+                const payload = await response.json();
+                if (!payload || payload.success !== true) {
+                    throw new Error(payload && payload.message ? payload.message : 'Operazione non riuscita');
+                }
+
+                const likesCount = Number(payload.likes_count);
+                const safeCount = isFiniteNumber(likesCount)
+                    ? likesCount
+                    : parseInt(String(payload.likes_count || '0'), 10) || 0;
+                const liked = payload.liked === true || payload.state === 'added';
+
+                countElement.dataset.commentLikeCountValue = String(safeCount);
+                countElement.textContent = payload.formatted_count || formatCount(safeCount);
+
+                button.dataset.commentLikeState = liked ? 'liked' : 'unliked';
+                button.setAttribute('aria-pressed', liked ? 'true' : 'false');
+                if (liked) {
+                    button.classList.add('text-white');
+                } else {
+                    button.classList.remove('text-white');
+                }
+            } catch (error) {
+                console.error('Impossibile aggiornare il Mi piace del commento:', error);
+                form.dataset.commentLikeFallback = '1';
+                window.setTimeout(() => {
+                    form.submit();
+                }, 0);
+            } finally {
+                delete form.dataset.commentLikeBusy;
+                button.removeAttribute('aria-busy');
+            }
+        };
+
+        document.addEventListener('submit', (event) => {
+            const targetForm = event.target;
+            if (!(targetForm instanceof HTMLFormElement) || !targetForm.matches('[data-comment-like-form]')) {
+                return;
+            }
+
+            if (targetForm.dataset.commentLikeFallback === '1') {
+                delete targetForm.dataset.commentLikeFallback;
+                return;
+            }
+
+            event.preventDefault();
+            toggleCommentLike(targetForm);
+        });
+    };
+
+    initCommentLikeEnhancements();
+
     const pushSetupContainer = document.querySelector('[data-push-setup]');
     if (pushSetupContainer) {
         initPushModule(pushSetupContainer);
