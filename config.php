@@ -762,8 +762,111 @@ function getCommunityStats(): array
     return $stats;
 }
 
+function getCommunityStories(int $limit = 8): array
+{
+    $limit = max(1, min($limit, 20));
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo || !communityPostsExtendedSchemaAvailable($pdo)) {
+        return [];
+    }
+
+    try {
+        $statement = $pdo->prepare(
+            'SELECT p.id, p.user_id, p.story_title, p.story_caption, p.story_credit, p.media_url, p.created_at, p.published_at, u.username, u.badge
+             FROM community_posts p
+             INNER JOIN users u ON u.id = p.user_id
+             WHERE p.content_type = "story" AND (p.status = "published" OR p.status IS NULL OR p.status = "")
+             ORDER BY p.published_at DESC, p.created_at DESC
+             LIMIT :limit'
+        );
+        $statement->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $statement->execute();
+        $rows = $statement->fetchAll();
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community stories: ' . $exception->getMessage());
+        return [];
+    }
+
+    if (empty($rows)) {
+        return [];
+    }
+
+    $storyIds = [];
+    foreach ($rows as $row) {
+        $storyId = (int) ($row['id'] ?? 0);
+        if ($storyId > 0) {
+            $storyIds[] = $storyId;
+        }
+    }
+
+    $mediaMap = !empty($storyIds) ? getCommunityPostMedia($storyIds) : [];
+
+    $stories = [];
+    foreach ($rows as $row) {
+        $storyId = (int) ($row['id'] ?? 0);
+        if ($storyId <= 0) {
+            continue;
+        }
+
+        $mediaList = $mediaMap[$storyId] ?? [];
+        $coverPath = '';
+        if (!empty($mediaList)) {
+            $firstMedia = $mediaList[0];
+            $coverPath = (string) ($firstMedia['path'] ?? '');
+        }
+
+        if ($coverPath === '') {
+            $coverPath = trim((string) ($row['media_url'] ?? ''));
+        }
+
+        $title = trim((string) ($row['story_title'] ?? ''));
+        if ($coverPath === '' || $title === '') {
+            continue;
+        }
+
+        $stories[] = [
+            'id' => $storyId,
+            'user_id' => (int) ($row['user_id'] ?? 0),
+            'title' => $title,
+            'caption' => trim((string) ($row['story_caption'] ?? '')),
+            'credit' => trim((string) ($row['story_credit'] ?? '')),
+            'image' => $coverPath,
+            'media' => $mediaList,
+            'author' => $row['username'] ?? 'Tifoso',
+            'badge' => $row['badge'] ?? 'Tifoso',
+            'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+            'published_at' => normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time())),
+        ];
+    }
+
+    return $stories;
+}
+
 function getFanSpotlight(): array
 {
+    $stories = getCommunityStories(8);
+
+    if (!empty($stories)) {
+        return array_map(static function (array $story): array {
+            $credit = $story['credit'] ?? '';
+            if ($credit === '' && !empty($story['author'])) {
+                $credit = '@' . ltrim((string) $story['author'], '@');
+            }
+
+            return [
+                'id' => $story['id'],
+                'title' => $story['title'],
+                'caption' => $story['caption'],
+                'image' => $story['image'],
+                'credit' => $credit,
+                'author' => $story['author'] ?? 'Tifoso',
+                'badge' => $story['badge'] ?? 'Tifoso',
+                'published_at' => $story['published_at'] ?? time(),
+            ];
+        }, $stories);
+    }
+
     return [
         [
             'title' => 'Curva Sud in festa',
@@ -794,6 +897,7 @@ $availablePages = [
     'partite' => __DIR__ . '/pages/partite.php',
     'community' => __DIR__ . '/pages/community.php',
     'profile' => __DIR__ . '/pages/profile.php',
+    'profile_settings' => __DIR__ . '/pages/profile_settings.php',
     'profile_search' => __DIR__ . '/pages/profile_search.php',
     'user_profile' => __DIR__ . '/pages/user_profile.php',
     'login' => __DIR__ . '/pages/login.php',
@@ -807,6 +911,7 @@ $pageTitles = [
     'partite' => 'Partite',
     'community' => 'Community',
     'profile' => 'Profilo',
+    'profile_settings' => 'Impostazioni profilo',
     'profile_search' => 'Cerca tifosi',
     'user_profile' => 'Profilo tifoso',
     'login' => 'Accedi',
@@ -1420,9 +1525,9 @@ function getUserCommunityPosts(int $authorId, int $offset = 0, int $limit = 6): 
     $viewerIsAuthor = $viewerId > 0 && $viewerId === $authorId;
     $extended = function_exists('communityPostsExtendedSchemaAvailable') ? communityPostsExtendedSchemaAvailable($pdo) : false;
 
-    $baseColumns = 'p.id, p.user_id, p.content, p.content_type, p.media_url, p.poll_question, p.poll_options, p.created_at';
+    $baseColumns = 'p.id, p.user_id, p.content, p.content_type, p.media_url, p.created_at';
     if ($extended) {
-        $baseColumns .= ', p.status, p.published_at';
+        $baseColumns .= ', p.poll_question, p.poll_options, p.story_title, p.story_caption, p.story_credit, p.status, p.published_at';
     }
 
     $sql = 'SELECT ' . $baseColumns . ', u.username, u.badge
@@ -1569,8 +1674,11 @@ function getUserCommunityPosts(int $authorId, int $offset = 0, int $limit = 6): 
             'content_type' => $row['content_type'] ?? 'text',
             'media_url' => $row['media_url'] ?? '',
             'media' => $mediaMap[$postId] ?? [],
-            'poll_question' => $row['poll_question'] ?? '',
+            'poll_question' => $extended ? ($row['poll_question'] ?? '') : '',
             'poll_options' => $pollOptions,
+            'story_title' => $extended ? ($row['story_title'] ?? '') : '',
+            'story_caption' => $extended ? ($row['story_caption'] ?? '') : '',
+            'story_credit' => $extended ? ($row['story_credit'] ?? '') : '',
             'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
             'published_at' => $extended ? normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time())) : normalizeToTimestamp($row['created_at'] ?? time()),
             'likes_count' => $likes[$postId] ?? 0,
@@ -2917,7 +3025,7 @@ function getCommunityPostForEditing(int $postId, int $userId): ?array
     }
 
     try {
-        $statement = $pdo->prepare('SELECT id, user_id, content, content_type, poll_question, poll_options, status, scheduled_for, published_at, media_url FROM community_posts WHERE id = :id AND user_id = :user_id LIMIT 1');
+    $statement = $pdo->prepare('SELECT id, user_id, content, content_type, poll_question, poll_options, story_title, story_caption, story_credit, status, scheduled_for, published_at, media_url FROM community_posts WHERE id = :id AND user_id = :user_id LIMIT 1');
         $statement->execute([
             'id' => $postId,
             'user_id' => $userId,
@@ -2954,6 +3062,9 @@ function getCommunityPostForEditing(int $postId, int $userId): ?array
             'content_type' => $row['content_type'] ?? 'text',
             'poll_question' => $row['poll_question'] ?? '',
             'poll_options' => $pollOptions,
+            'story_title' => $row['story_title'] ?? '',
+            'story_caption' => $row['story_caption'] ?? '',
+            'story_credit' => $row['story_credit'] ?? '',
             'status' => $row['status'] ?? 'draft',
             'scheduled_for' => $row['scheduled_for'] ?? null,
             'published_at' => $row['published_at'] ?? null,
@@ -2984,17 +3095,20 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
     $currentUserId = isset($currentUser['id']) ? (int) $currentUser['id'] : 0;
 
     if ($extendedSchema) {
-        $sql = 'SELECT
-                    p.id,
-                    p.user_id,
-                    p.content,
-                    p.content_type,
-                    p.media_url,
-                    p.poll_question,
-                    p.poll_options,
-                    p.created_at,
-                    p.published_at,
-                    p.status,
+    $sql = 'SELECT
+            p.id,
+            p.user_id,
+            p.content,
+            p.content_type,
+            p.media_url,
+            p.poll_question,
+            p.poll_options,
+            p.story_title,
+            p.story_caption,
+            p.story_credit,
+            p.created_at,
+            p.published_at,
+            p.status,
                     u.username,
                     u.badge,
                     (SELECT COUNT(*) FROM community_post_comments c WHERE c.post_id = p.id) AS comments_count,
@@ -3089,6 +3203,9 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                 'media_url' => $row['media_url'] ?? '',
                 'poll_question' => $extendedSchema ? ($row['poll_question'] ?? '') : '',
                 'poll_options' => $pollOptions,
+                'story_title' => $extendedSchema ? ($row['story_title'] ?? '') : '',
+                'story_caption' => $extendedSchema ? ($row['story_caption'] ?? '') : '',
+                'story_credit' => $extendedSchema ? ($row['story_credit'] ?? '') : '',
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
                 'published_at' => $extendedSchema
                     ? normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time()))
@@ -3488,33 +3605,46 @@ function getCommunityComments(int $postId, int $limit = 20, int $viewerId = 0): 
     $totalLimit = min($limit * 5, 200);
 
     try {
-        $selectFields = 'c.id, c.parent_comment_id, c.content, c.created_at, c.updated_at, c.post_id, c.user_id, u.username, u.badge, COALESCE(l.likes_count, 0) AS likes_count';
-        if ($viewerId > 0) {
-            $selectFields .= ', CASE WHEN ul.user_id IS NULL THEN 0 ELSE 1 END AS has_liked';
+        $reactionsAvailable = communityCommentReactionsTableAvailable($pdo);
+
+        $selectFields = 'c.id, c.parent_comment_id, c.content, c.created_at, c.updated_at, c.post_id, c.user_id, u.username, u.badge';
+        if ($reactionsAvailable) {
+            $selectFields .= ', COALESCE(l.likes_count, 0) AS likes_count';
+            if ($viewerId > 0) {
+                $selectFields .= ', CASE WHEN ul.user_id IS NULL THEN 0 ELSE 1 END AS has_liked';
+            } else {
+                $selectFields .= ', 0 AS has_liked';
+            }
         } else {
-            $selectFields .= ', 0 AS has_liked';
+            $selectFields .= ', 0 AS likes_count, 0 AS has_liked';
         }
 
         $sql = 'SELECT ' . $selectFields . '
                 FROM community_post_comments c
-                INNER JOIN users u ON u.id = c.user_id
+                INNER JOIN users u ON u.id = c.user_id';
+
+        if ($reactionsAvailable) {
+            $sql .= '
                 LEFT JOIN (
                     SELECT comment_id, COUNT(*) AS likes_count
                     FROM community_comment_reactions
                     GROUP BY comment_id
                 ) l ON l.comment_id = c.id';
 
-        if ($viewerId > 0) {
-            $sql .= '\n                LEFT JOIN community_comment_reactions ul ON ul.comment_id = c.id AND ul.user_id = :viewer_id';
+            if ($viewerId > 0) {
+                $sql .= '
+                LEFT JOIN community_comment_reactions ul ON ul.comment_id = c.id AND ul.user_id = :viewer_id';
+            }
         }
 
-        $sql .= '\n                WHERE c.post_id = :post_id
+        $sql .= '
+                WHERE c.post_id = :post_id
                 ORDER BY c.created_at ASC, c.id ASC
                 LIMIT :limit';
 
         $statement = $pdo->prepare($sql);
         $statement->bindValue(':post_id', $postId, PDO::PARAM_INT);
-        if ($viewerId > 0) {
+        if ($viewerId > 0 && $reactionsAvailable) {
             $statement->bindValue(':viewer_id', $viewerId, PDO::PARAM_INT);
         }
         $statement->bindValue(':limit', $totalLimit, PDO::PARAM_INT);
@@ -3584,6 +3714,10 @@ function toggleCommunityCommentReaction(int $commentId, int $userId): array
     $pdo = getDatabaseConnection();
     if (!$pdo) {
         return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
+    }
+
+    if (!communityCommentReactionsTableAvailable($pdo)) {
+        return ['success' => false, 'message' => 'Le reazioni ai commenti non sono disponibili in questo momento.'];
     }
 
     $comment = findCommunityCommentById($commentId);
@@ -3899,7 +4033,7 @@ function communityPostsExtendedSchemaAvailable(?PDO $connection = null): bool
     }
 
     try {
-        $pdo->query('SELECT status, poll_question, poll_options, scheduled_for, published_at FROM community_posts LIMIT 1');
+    $pdo->query('SELECT status, poll_question, poll_options, story_title, story_caption, story_credit, scheduled_for, published_at FROM community_posts LIMIT 1');
         $cache = true;
     } catch (PDOException $exception) {
         $sqlState = $exception->getCode();
@@ -3937,6 +4071,36 @@ function communityPollVotesTableAvailable(?PDO $connection = null): bool
             $cache = false;
         } else {
             error_log('[BianconeriHub] Failed checking community_poll_votes availability: ' . $exception->getMessage());
+            $cache = false;
+        }
+    }
+
+    return $cache;
+}
+
+function communityCommentReactionsTableAvailable(?PDO $connection = null): bool
+{
+    static $cache;
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        $cache = false;
+        return $cache;
+    }
+
+    try {
+        $pdo->query('SELECT 1 FROM community_comment_reactions LIMIT 1');
+        $cache = true;
+    } catch (PDOException $exception) {
+        $sqlState = $exception->getCode();
+        if ($sqlState === '42S02' || stripos($exception->getMessage(), 'community_comment_reactions') !== false) {
+            $cache = false;
+        } else {
+            error_log('[BianconeriHub] Failed checking community_comment_reactions availability: ' . $exception->getMessage());
             $cache = false;
         }
     }
@@ -4039,7 +4203,7 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
 {
     $message = trim((string) ($input['message'] ?? ''));
     $mode = strtolower((string) ($input['composer_mode'] ?? 'text'));
-    $allowedModes = ['text', 'photo', 'poll'];
+    $allowedModes = ['text', 'photo', 'poll', 'story'];
     if (!in_array($mode, $allowedModes, true)) {
         $mode = 'text';
     }
@@ -4056,6 +4220,10 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
     if ($message !== '' && mb_strlen($message) > 500) {
         return ['success' => false, 'message' => 'Il messaggio non può superare i 500 caratteri.'];
     }
+
+    $storyTitle = trim((string) ($input['story_title'] ?? ''));
+    $storyCaption = trim((string) ($input['story_caption'] ?? ''));
+    $storyCredit = trim((string) ($input['story_credit'] ?? ''));
 
     $pollQuestion = trim((string) ($input['poll_question'] ?? ''));
     $pollOptionsRaw = $input['poll_options'] ?? [];
@@ -4112,9 +4280,16 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
 
     $mediaTableAvailable = communityMediaTableAvailable($pdo);
     $maxAttachments = $mediaTableAvailable ? 4 : 1;
+    if ($mode === 'story') {
+        $maxAttachments = 1;
+    }
 
     $attachmentBuffer = count($existingMediaIds) + count($newUploadFiles) + ($clipboardData !== '' ? 1 : 0);
     if ($attachmentBuffer > $maxAttachments) {
+        if ($mode === 'story') {
+            return ['success' => false, 'message' => 'Le storie possono includere una sola immagine.'];
+        }
+
         if ($maxAttachments === 1) {
             return ['success' => false, 'message' => 'Puoi allegare una sola immagine per post al momento.'];
         }
@@ -4126,12 +4301,16 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         return ['success' => false, 'message' => 'Il messaggio non può essere vuoto.'];
     }
 
-    if ($mode !== 'photo' && $attachmentBuffer > 0) {
-        return ['success' => false, 'message' => 'Gli allegati sono disponibili solo per i post fotografici.'];
+    if (!in_array($mode, ['photo', 'story'], true) && $attachmentBuffer > 0) {
+        return ['success' => false, 'message' => 'Gli allegati sono disponibili solo per i post fotografici o le storie.'];
     }
 
     if ($mode === 'photo' && $attachmentBuffer === 0) {
         return ['success' => false, 'message' => 'Aggiungi almeno un’immagine al tuo post fotografico.'];
+    }
+
+    if ($mode === 'story' && $attachmentBuffer === 0) {
+        return ['success' => false, 'message' => 'Aggiungi un’immagine alla tua storia.'];
     }
 
     if ($mode === 'poll') {
@@ -4187,6 +4366,44 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         }
 
         $isUpdating = true;
+    }
+
+    if ($mode !== 'story') {
+        $storyTitle = '';
+        $storyCaption = '';
+        $storyCredit = '';
+    } else {
+        if ($isUpdating && $existingPost) {
+            if ($storyTitle === '' && isset($existingPost['story_title'])) {
+                $storyTitle = trim((string) ($existingPost['story_title'] ?? ''));
+            }
+            if ($storyCaption === '' && isset($existingPost['story_caption'])) {
+                $storyCaption = trim((string) ($existingPost['story_caption'] ?? ''));
+            }
+            if ($storyCredit === '' && isset($existingPost['story_credit'])) {
+                $storyCredit = trim((string) ($existingPost['story_credit'] ?? ''));
+            }
+        }
+
+        if ($storyTitle === '') {
+            return ['success' => false, 'message' => 'Aggiungi un titolo alla tua storia.'];
+        }
+
+        if (mb_strlen($storyTitle) > 80) {
+            return ['success' => false, 'message' => 'Il titolo della storia può avere al massimo 80 caratteri.'];
+        }
+
+        if ($storyCaption === '') {
+            return ['success' => false, 'message' => 'Aggiungi una descrizione alla tua storia.'];
+        }
+
+        if (mb_strlen($storyCaption) > 600) {
+            return ['success' => false, 'message' => 'La descrizione della storia può avere al massimo 600 caratteri.'];
+        }
+
+        if ($storyCredit !== '' && mb_strlen($storyCredit) > 80) {
+            return ['success' => false, 'message' => 'Il credito della storia può avere al massimo 80 caratteri.'];
+        }
     }
 
     $pollOptionsJson = null;
@@ -4279,6 +4496,22 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         return ['success' => false, 'message' => 'Aggiungi almeno un’immagine al tuo post.'];
     }
 
+    if ($mode === 'story' && $totalAttachments === 0) {
+        foreach ($uploads as $upload) {
+            deleteCommunityMediaFile($upload['relative_path']);
+        }
+
+        return ['success' => false, 'message' => 'Aggiungi un’immagine alla tua storia.'];
+    }
+
+    if ($mode === 'story' && $totalAttachments > 1) {
+        foreach ($uploads as $upload) {
+            deleteCommunityMediaFile($upload['relative_path']);
+        }
+
+        return ['success' => false, 'message' => 'Le storie possono includere una sola immagine.'];
+    }
+
     $finalContentType = $mode;
     if ($mode === 'photo' && $totalAttachments > 1 && $mediaTableAvailable) {
         $finalContentType = 'gallery';
@@ -4288,12 +4521,15 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         $pdo->beginTransaction();
 
         if ($isUpdating) {
-            $update = $pdo->prepare('UPDATE community_posts SET content = :content, content_type = :content_type, poll_question = :poll_question, poll_options = :poll_options, status = :status, scheduled_for = :scheduled_for, published_at = :published_at, updated_at = NOW() WHERE id = :id AND user_id = :user_id');
+            $update = $pdo->prepare('UPDATE community_posts SET content = :content, content_type = :content_type, poll_question = :poll_question, poll_options = :poll_options, story_title = :story_title, story_caption = :story_caption, story_credit = :story_credit, status = :status, scheduled_for = :scheduled_for, published_at = :published_at, updated_at = NOW() WHERE id = :id AND user_id = :user_id');
             $update->execute([
                 'content' => $message,
                 'content_type' => $finalContentType,
                 'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
                 'poll_options' => $pollOptionsJson,
+                'story_title' => $storyTitle !== '' ? $storyTitle : null,
+                'story_caption' => $storyCaption !== '' ? $storyCaption : null,
+                'story_credit' => $storyCredit !== '' ? $storyCredit : null,
                 'status' => $status,
                 'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
                 'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
@@ -4303,13 +4539,16 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
 
             $postId = $existingPost['id'];
         } else {
-            $insert = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, poll_question, poll_options, status, scheduled_for, published_at) VALUES (:user_id, :content, :content_type, :poll_question, :poll_options, :status, :scheduled_for, :published_at)');
+            $insert = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, poll_question, poll_options, story_title, story_caption, story_credit, status, scheduled_for, published_at) VALUES (:user_id, :content, :content_type, :poll_question, :poll_options, :story_title, :story_caption, :story_credit, :status, :scheduled_for, :published_at)');
             $insert->execute([
                 'user_id' => $userId,
                 'content' => $message,
                 'content_type' => $finalContentType,
                 'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
                 'poll_options' => $pollOptionsJson,
+                'story_title' => $storyTitle !== '' ? $storyTitle : null,
+                'story_caption' => $storyCaption !== '' ? $storyCaption : null,
+                'story_credit' => $storyCredit !== '' ? $storyCredit : null,
                 'status' => $status,
                 'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
                 'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
@@ -4746,6 +4985,36 @@ function getTimeUntil(DateTimeInterface $futureDate): string
     }
 
     return 'Mancano pochi secondi';
+}
+
+function getCommunityEmojiOptions(): array
+{
+    static $options;
+
+    if (is_array($options)) {
+        return $options;
+    }
+
+    $options = [
+        '⚽',
+        '🏟️',
+        '🖤',
+        '🤍',
+        '🔥',
+        '💪',
+        '🙌',
+        '🎉',
+        '⭐',
+        '🏆',
+        '👏',
+        '💯',
+        '🥹',
+        '😉',
+        '😊',
+        '🥳',
+    ];
+
+    return $options;
 }
 
 function storeOldInput(array $data): void

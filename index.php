@@ -148,6 +148,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!is_array($pollOptionsInput)) {
                 $pollOptionsInput = [];
             }
+            $oldStoryTitle = trim((string) ($_POST['story_title'] ?? ''));
+            $oldStoryCaption = trim((string) ($_POST['story_caption'] ?? ''));
+            $oldStoryCredit = trim((string) ($_POST['story_credit'] ?? ''));
+            $oldComposerAction = strtolower((string) ($_POST['composer_action'] ?? 'publish'));
+            $oldScheduleAt = trim((string) ($_POST['schedule_at'] ?? ''));
+            $oldDraftId = isset($_POST['draft_id']) ? (int) $_POST['draft_id'] : 0;
+
             storeOldInput([
                 'message' => trim((string) ($_POST['message'] ?? '')),
                 'composer_mode' => $_POST['composer_mode'] ?? 'text',
@@ -155,6 +162,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'poll_options' => array_map(static function ($option) {
                     return trim((string) $option);
                 }, $pollOptionsInput),
+                'story_title' => $oldStoryTitle,
+                'story_caption' => $oldStoryCaption,
+                'story_credit' => $oldStoryCredit,
+                'composer_action' => $oldComposerAction,
+                'schedule_at' => $oldScheduleAt,
+                'draft_id' => $oldDraftId,
             ]);
         }
 
@@ -205,6 +218,99 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         header('Location: ' . $redirectUrl);
+        exit;
+    }
+
+    if ($formType === 'profile_settings_update') {
+        $fields = [
+            'bio' => trim((string) ($_POST['bio'] ?? '')),
+            'location' => trim((string) ($_POST['location'] ?? '')),
+            'website' => trim((string) ($_POST['website'] ?? '')),
+            'favorite_player' => trim((string) ($_POST['favorite_player'] ?? '')),
+            'favorite_memory' => trim((string) ($_POST['favorite_memory'] ?? '')),
+        ];
+
+        if (!validateCsrfToken($_POST['_token'] ?? '')) {
+            storeOldInput($fields);
+            setFlash('profile_settings', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+            header('Location: ?page=profile_settings');
+            exit;
+        }
+
+        if (!isUserLoggedIn()) {
+            storeOldInput($fields);
+            setFlash('profile_settings', 'Effettua il login per modificare il profilo.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $user = getLoggedInUser();
+        $result = saveUserProfileSettings((int) $user['id'], $fields);
+
+        if ($result['success']) {
+            clearOldInput();
+            setFlash('profile_settings', 'Profilo aggiornato con successo!', 'success');
+        } else {
+            storeOldInput($fields);
+            $message = $result['message'] ?? 'Impossibile aggiornare il profilo in questo momento.';
+            setFlash('profile_settings', $message, 'error');
+        }
+
+        header('Location: ?page=profile_settings');
+        exit;
+    }
+
+    if ($formType === 'profile_avatar') {
+        if (!validateCsrfToken($_POST['_token'] ?? '')) {
+            setFlash('profile_settings', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+            header('Location: ?page=profile_settings');
+            exit;
+        }
+
+        if (!isUserLoggedIn()) {
+            setFlash('profile_settings', 'Effettua il login per aggiornare l\'avatar.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $user = getLoggedInUser();
+        $result = updateUserAvatar((int) $user['id'], $_FILES['avatar'] ?? null);
+
+        if ($result['success']) {
+            setFlash('profile_settings', 'Avatar aggiornato con successo!', 'success');
+        } else {
+            $message = $result['message'] ?? 'Impossibile aggiornare l\'avatar in questo momento.';
+            setFlash('profile_settings', $message, 'error');
+        }
+
+        header('Location: ?page=profile_settings');
+        exit;
+    }
+
+    if ($formType === 'profile_cover') {
+        if (!validateCsrfToken($_POST['_token'] ?? '')) {
+            setFlash('profile_settings', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+            header('Location: ?page=profile_settings');
+            exit;
+        }
+
+        if (!isUserLoggedIn()) {
+            setFlash('profile_settings', 'Effettua il login per aggiornare la copertina.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $user = getLoggedInUser();
+        $result = updateUserCover((int) $user['id'], $_FILES['cover'] ?? null);
+
+        if ($result['success']) {
+            setFlash('profile_settings', 'Copertina aggiornata con successo!', 'success');
+        } else {
+            $message = $result['message'] ?? 'Impossibile aggiornare la copertina in questo momento.';
+            setFlash('profile_settings', $message, 'error');
+        }
+
+        header('Location: ?page=profile_settings');
         exit;
     }
 

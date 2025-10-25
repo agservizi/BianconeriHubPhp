@@ -54,6 +54,7 @@ $registeredUsers = getRegisteredUsers();
 $stats = getCommunityStats();
 $newsItems = array_slice(getNewsItems(), 0, 5);
 $matches = array_slice(getUpcomingMatches(), 0, 4);
+$communityEmojiOptions = getCommunityEmojiOptions();
 
 $trendingTags = [];
 foreach ($newsItems as $item) {
@@ -70,7 +71,7 @@ $oldCommentPostId = (int) getOldInput('community_comment_post_id', 0);
 $oldCommentParentId = (int) getOldInput('community_comment_parent_id', 0);
 $oldMessage = getOldInput('message');
 $oldComposerMode = strtolower((string) getOldInput('composer_mode', 'text'));
-if (!in_array($oldComposerMode, ['text', 'photo', 'poll'], true)) {
+if (!in_array($oldComposerMode, ['text', 'photo', 'poll', 'story'], true)) {
     $oldComposerMode = 'text';
 }
 $oldPollQuestion = (string) getOldInput('poll_question', '');
@@ -84,6 +85,9 @@ foreach ($oldPollOptionsInput as $optionValue) {
 }
 $oldPollOptions = array_slice($oldPollOptions, 0, 4);
 $oldPollOptions = array_pad($oldPollOptions, 4, '');
+$oldStoryTitle = (string) getOldInput('story_title', '');
+$oldStoryCaption = (string) getOldInput('story_caption', '');
+$oldStoryCredit = (string) getOldInput('story_credit', '');
 $oldComposerAction = strtolower((string) getOldInput('composer_action', 'publish'));
 if (!in_array($oldComposerAction, ['publish', 'schedule', 'draft'], true)) {
     $oldComposerAction = 'publish';
@@ -176,22 +180,40 @@ $pushHasFollowing = $pushFollowingCount > 0;
                                 <input type="hidden" name="composer_mode" value="<?php echo htmlspecialchars($oldComposerMode, ENT_QUOTES, 'UTF-8'); ?>" data-composer-mode-input>
                                 <input type="hidden" name="composer_action" value="<?php echo htmlspecialchars($oldComposerAction, ENT_QUOTES, 'UTF-8'); ?>" data-composer-action-input>
                                 <input type="hidden" name="draft_id" value="<?php echo $oldDraftId; ?>" data-composer-draft-id>
-                                <textarea
-                                    name="message"
-                                    rows="4"
-                                    class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
-                                    placeholder="Lancia una nuova discussione o racconta un momento da stadio..."
-                                    data-composer-textarea
-                                    data-placeholder-base="Lancia una nuova discussione o racconta un momento da stadio..."
-                                    data-placeholder-photo="Aggiungi una descrizione alla foto bianconera che vuoi condividere..."
-                                    data-placeholder-poll="Spiega il contesto del sondaggio o aggiungi un commento iniziale..."
-                                ><?php echo htmlspecialchars($oldMessage, ENT_QUOTES, 'UTF-8'); ?></textarea>
+                                <div class="space-y-2" data-emoji-picker>
+                                    <textarea
+                                        name="message"
+                                        rows="4"
+                                        class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
+                                        placeholder="Lancia una nuova discussione o racconta un momento da stadio..."
+                                        data-composer-textarea
+                                        data-emoji-input
+                                        data-placeholder-base="Lancia una nuova discussione o racconta un momento da stadio..."
+                                        data-placeholder-photo="Aggiungi una descrizione alla foto bianconera che vuoi condividere..."
+                                        data-placeholder-poll="Spiega il contesto del sondaggio o aggiungi un commento iniziale..."
+                                        data-placeholder-story="Anticipa la tua storia bianconera con poche parole..."
+                                    ><?php echo htmlspecialchars($oldMessage, ENT_QUOTES, 'UTF-8'); ?></textarea>
+                                    <div class="relative inline-block">
+                                        <button type="button" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white transition-all hover:bg-white hover:text-black" data-emoji-toggle aria-expanded="false" aria-haspopup="true">
+                                            <span>Emoji</span>
+                                            <span aria-hidden="true">😊</span>
+                                        </button>
+                                        <div class="absolute left-0 z-20 mt-2 hidden w-56 rounded-2xl border border-white/10 bg-black/90 p-2 shadow-xl" data-emoji-panel role="listbox">
+                                            <div class="grid grid-cols-6 gap-1">
+                                                <?php foreach ($communityEmojiOptions as $emoji): ?>
+                                                    <button type="button" class="flex h-9 w-9 items-center justify-center rounded-full text-lg transition-colors hover:bg-white/15" data-emoji-value="<?php echo htmlspecialchars($emoji, ENT_QUOTES, 'UTF-8'); ?>" role="option"><?php echo htmlspecialchars($emoji, ENT_QUOTES, 'UTF-8'); ?></button>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                                 <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
                                         <?php
                                         $composerModes = [
                                             'text' => 'Testo',
                                             'photo' => 'Foto',
+                                            'story' => 'Storia',
                                             'poll' => 'Sondaggio',
                                         ];
                                         foreach ($composerModes as $modeKey => $modeLabel):
@@ -230,7 +252,7 @@ $pushHasFollowing = $pushFollowingCount > 0;
                                     >
                                     <p class="mt-2 text-[0.65rem] uppercase tracking-wide text-gray-500">Programma con almeno cinque minuti di anticipo.</p>
                                 </div>
-                                <div class="space-y-3 <?php echo $oldComposerMode === 'photo' ? '' : 'hidden'; ?>" data-composer-photo-section>
+                                <div class="space-y-3 <?php echo in_array($oldComposerMode, ['photo', 'story'], true) ? '' : 'hidden'; ?>" data-composer-photo-section>
                                     <div class="space-y-2">
                                         <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400">Carica immagini</label>
                                         <input
@@ -277,6 +299,47 @@ $pushHasFollowing = $pushFollowingCount > 0;
                                             </div>
                                         </div>
                                     </template>
+                                </div>
+                                <div class="space-y-3 <?php echo $oldComposerMode === 'story' ? '' : 'hidden'; ?>" data-composer-story-section>
+                                    <div class="space-y-2">
+                                        <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400" for="story-title">Titolo della storia</label>
+                                        <input
+                                            type="text"
+                                            id="story-title"
+                                            name="story_title"
+                                            value="<?php echo htmlspecialchars($oldStoryTitle, ENT_QUOTES, 'UTF-8'); ?>"
+                                            maxlength="80"
+                                            class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
+                                            placeholder="Es. Trasferta a Wembley"
+                                            data-composer-story-title
+                                        >
+                                    </div>
+                                    <div class="space-y-2">
+                                        <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400" for="story-caption">Racconto breve</label>
+                                        <textarea
+                                            id="story-caption"
+                                            name="story_caption"
+                                            rows="4"
+                                            maxlength="600"
+                                            class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
+                                            placeholder="Descrivi emozioni, contesto e cosa rende speciale questo momento..."
+                                            data-composer-story-caption
+                                        ><?php echo htmlspecialchars($oldStoryCaption, ENT_QUOTES, 'UTF-8'); ?></textarea>
+                                    </div>
+                                    <div class="space-y-2">
+                                        <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400" for="story-credit">Crediti (opzionale)</label>
+                                        <input
+                                            type="text"
+                                            id="story-credit"
+                                            name="story_credit"
+                                            value="<?php echo htmlspecialchars($oldStoryCredit, ENT_QUOTES, 'UTF-8'); ?>"
+                                            maxlength="80"
+                                            class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white"
+                                            placeholder="@autore oppure fonte dell’immagine"
+                                            data-composer-story-credit
+                                        >
+                                    </div>
+                                    <p class="text-xs text-gray-500">Suggerimento: scegli un titolo incisivo (max 80 caratteri) e cita chi ha scattato la foto se necessario.</p>
                                 </div>
                                 <div class="space-y-3 <?php echo $oldComposerMode === 'poll' ? '' : 'hidden'; ?>" data-composer-poll-section>
                                     <div class="space-y-2">

@@ -42,6 +42,7 @@ $pageDescriptions = [
     'partite' => 'Calendario sempre aggiornato con orari, stadio, dirette TV e reminder per non perdere nemmeno un fischio.',
     'community' => 'La curva digitale dove la voce dei tifosi diventa racconto, idee e cori a sostegno della Vecchia Signora.',
     'profile' => 'Gestisci il tuo account, consulta le statistiche personali e ripercorri il tuo contributo alla community bianconera.',
+    'profile_settings' => 'Personalizza bio, foto e riferimenti bianconeri per raccontare chi sei all’interno della curva digitale.',
     'profile_search' => 'Cerca e segui altri tifosi per personalizzare il tuo feed e ricevere notifiche mirate.',
     'login' => 'Accedi alla tua area riservata per gestire profilo, badge e partecipare alle discussioni in diretta.',
     'register' => 'Iscriviti per ottenere badge esclusivi, contenuti extra e vivere l’esperienza BianconeriHub completa.',

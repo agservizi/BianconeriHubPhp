@@ -541,8 +541,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const photoHint = composer.querySelector('[data-composer-photo-hint]');
         const photoClipboardField = composer.querySelector('[data-composer-photo-clipboard]');
         const photoClipboardNameField = composer.querySelector('[data-composer-photo-clipboard-name]');
-        const pollQuestionInput = composer.querySelector('[data-composer-poll-question]');
-        const pollOptionInputs = composer.querySelectorAll('[data-composer-poll-option]');
+    const pollQuestionInput = composer.querySelector('[data-composer-poll-question]');
+    const pollOptionInputs = composer.querySelectorAll('[data-composer-poll-option]');
+    const storySection = composer.querySelector('[data-composer-story-section]');
+    const storyTitleInput = composer.querySelector('[data-composer-story-title]');
+    const storyCaptionInput = composer.querySelector('[data-composer-story-caption]');
+    const storyCreditInput = composer.querySelector('[data-composer-story-credit]');
         const actionButtons = composer.querySelectorAll('[data-composer-action]');
         const actionInput = composer.querySelector('[data-composer-action-input]');
         const scheduleWrapper = composer.querySelector('[data-composer-schedule-wrapper]');
@@ -563,12 +567,14 @@ document.addEventListener('DOMContentLoaded', () => {
             draft: 'Salva bozza',
         };
 
-        const getCurrentMode = () => (modeInput ? modeInput.value : 'text');
-        const getAttachmentCount = () => composerState.files.length + (composerState.clipboard ? 1 : 0);
+    const getCurrentMode = () => (modeInput ? modeInput.value : 'text');
+    const getAttachmentCount = () => composerState.files.length + (composerState.clipboard ? 1 : 0);
+    const getAttachmentLimit = () => (getCurrentMode() === 'story' ? 1 : composerMaxAttachments);
 
         const basePlaceholder = textArea ? textArea.dataset.placeholderBase || textArea.placeholder : '';
         const photoPlaceholder = textArea ? textArea.dataset.placeholderPhoto || basePlaceholder : '';
-        const pollPlaceholder = textArea ? textArea.dataset.placeholderPoll || basePlaceholder : '';
+    const pollPlaceholder = textArea ? textArea.dataset.placeholderPoll || basePlaceholder : '';
+    const storyPlaceholder = textArea ? textArea.dataset.placeholderStory || basePlaceholder : '';
 
         const setPhotoError = (message) => {
             if (!photoError) {
@@ -588,26 +594,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            if (composerMaxAttachments <= 0) {
+            const limit = getAttachmentLimit();
+            const mode = getCurrentMode();
+
+            if (limit <= 0) {
                 photoHint.textContent = '';
                 return;
             }
 
             const attachmentsCount = getAttachmentCount();
 
-            if (composerMaxAttachments === 1) {
-                photoHint.textContent = attachmentsCount === 0
-                    ? 'Al momento puoi allegare una sola immagine oppure incollarne una dagli appunti.'
-                    : 'Hai allegato l’unica immagine disponibile per questo post.';
+            if (limit === 1) {
+                if (mode === 'story') {
+                    photoHint.textContent = attachmentsCount === 0
+                        ? 'Carica o incolla l’immagine che racconta la tua storia.'
+                        : 'Hai allegato l’immagine della tua storia.';
+                } else {
+                    photoHint.textContent = attachmentsCount === 0
+                        ? 'Al momento puoi allegare una sola immagine oppure incollarne una dagli appunti.'
+                        : 'Hai allegato l’unica immagine disponibile per questo post.';
+                }
                 return;
             }
 
             if (attachmentsCount === 0) {
-                photoHint.textContent = `Puoi allegare fino a ${composerMaxAttachments} immagini (anche incollandole dagli appunti).`;
+                photoHint.textContent = `Puoi allegare fino a ${limit} immagini (anche incollandole dagli appunti).`;
                 return;
             }
 
-            const remaining = composerMaxAttachments - attachmentsCount;
+            const remaining = limit - attachmentsCount;
             if (remaining <= 0) {
                 photoHint.textContent = 'Hai raggiunto il limite di immagini per questo post.';
             } else {
@@ -627,7 +642,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const toggleRequiredAttributes = (mode) => {
             if (photoFileInput) {
-                photoFileInput.required = mode === 'photo' && getAttachmentCount() === 0;
+                photoFileInput.required = ['photo', 'story'].includes(mode) && getAttachmentCount() === 0;
             }
 
             if (pollQuestionInput) {
@@ -637,6 +652,14 @@ document.addEventListener('DOMContentLoaded', () => {
             pollOptionInputs.forEach((input, index) => {
                 input.required = mode === 'poll' && index < 2;
             });
+
+            if (storyTitleInput) {
+                storyTitleInput.required = mode === 'story';
+            }
+
+            if (storyCaptionInput) {
+                storyCaptionInput.required = mode === 'story';
+            }
 
             if (scheduleInput) {
                 const currentAction = actionInput ? actionInput.value : 'publish';
@@ -662,11 +685,19 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const showMaxAttachmentError = () => {
-            if (composerMaxAttachments === 1) {
-                setPhotoError('Puoi allegare una sola immagine per post al momento.');
-            } else {
-                setPhotoError(`Puoi allegare al massimo ${composerMaxAttachments} immagini per post.`);
+            const limit = getAttachmentLimit();
+            const mode = getCurrentMode();
+
+            if (limit === 1) {
+                if (mode === 'story') {
+                    setPhotoError('Le storie possono includere una sola immagine.');
+                } else {
+                    setPhotoError('Puoi allegare una sola immagine per post al momento.');
+                }
+                return;
             }
+
+            setPhotoError(`Puoi allegare al massimo ${limit} immagini per post.`);
         };
 
         const refreshPhotoPreview = () => {
@@ -754,7 +785,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     return false;
                 }
 
-                if (getAttachmentCount() >= composerMaxAttachments) {
+                if (getAttachmentCount() >= getAttachmentLimit()) {
                     showMaxAttachmentError();
                     return true;
                 }
@@ -795,7 +826,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            if (getAttachmentCount() >= composerMaxAttachments) {
+            if (getAttachmentCount() >= getAttachmentLimit()) {
                 showMaxAttachmentError();
                 return;
             }
@@ -844,10 +875,17 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const applyMode = (mode) => {
-            const normalizedMode = ['text', 'photo', 'poll'].includes(mode) ? mode : 'text';
+            const allowedModes = ['text', 'photo', 'poll', 'story'];
+            const normalizedMode = allowedModes.includes(mode) ? mode : 'text';
+            const attachmentCount = getAttachmentCount();
 
-            if (normalizedMode !== 'photo' && getAttachmentCount() > 0) {
+            if (!['photo', 'story'].includes(normalizedMode) && attachmentCount > 0) {
                 setPhotoError('Rimuovi le immagini prima di cambiare modalità.');
+                return;
+            }
+
+            if (normalizedMode === 'story' && attachmentCount > 1) {
+                setPhotoError('Le storie possono includere una sola immagine. Rimuovi quelle in eccesso.');
                 return;
             }
 
@@ -866,7 +904,11 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (photoSection) {
-                photoSection.classList.toggle('hidden', normalizedMode !== 'photo');
+                photoSection.classList.toggle('hidden', !['photo', 'story'].includes(normalizedMode));
+            }
+
+            if (storySection) {
+                storySection.classList.toggle('hidden', normalizedMode !== 'story');
             }
 
             if (pollSection) {
@@ -878,12 +920,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     textArea.placeholder = photoPlaceholder;
                 } else if (normalizedMode === 'poll') {
                     textArea.placeholder = pollPlaceholder;
+                } else if (normalizedMode === 'story') {
+                    textArea.placeholder = storyPlaceholder;
                 } else {
                     textArea.placeholder = basePlaceholder;
                 }
             }
 
             toggleRequiredAttributes(normalizedMode);
+            updatePhotoHint();
         };
 
         const applyAction = (action) => {
@@ -944,7 +989,12 @@ document.addEventListener('DOMContentLoaded', () => {
             photoFileInput.addEventListener('change', () => {
                 if (photoFileInput.files && photoFileInput.files.length > 0) {
                     addFileEntries(photoFileInput.files);
-                    applyMode('photo');
+                    const currentMode = getCurrentMode();
+                    if (currentMode === 'photo' || currentMode === 'story') {
+                        applyMode(currentMode);
+                    } else {
+                        applyMode('photo');
+                    }
                 } else if (typeof window.DataTransfer === 'undefined') {
                     composerState.files = [];
                     refreshPhotoPreview();
@@ -993,7 +1043,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (pastedFile) {
                             event.preventDefault();
                             addClipboardFile(pastedFile);
-                            applyMode('photo');
+                            const currentMode = getCurrentMode();
+                            if (currentMode === 'photo' || currentMode === 'story') {
+                                applyMode(currentMode);
+                            } else {
+                                applyMode('photo');
+                            }
                         }
                         break;
                     }
@@ -1009,6 +1064,150 @@ document.addEventListener('DOMContentLoaded', () => {
 
         refreshPhotoPreview();
     }
+
+    const emojiPickerContainers = new Set();
+
+    const closeAllEmojiPanels = (exceptContainer = null) => {
+        emojiPickerContainers.forEach((container) => {
+            if (!(container instanceof HTMLElement) || (exceptContainer && container === exceptContainer)) {
+                return;
+            }
+
+            const toggle = container.querySelector('[data-emoji-toggle]');
+            const panel = container.querySelector('[data-emoji-panel]');
+
+            if (panel && !panel.classList.contains('hidden')) {
+                panel.classList.add('hidden');
+            }
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', 'false');
+            }
+            container.dataset.emojiPickerOpen = '0';
+        });
+    };
+
+    const initEmojiPickers = () => {
+        const containers = document.querySelectorAll('[data-emoji-picker]');
+
+        containers.forEach((container) => {
+            if (!(container instanceof HTMLElement) || container.dataset.emojiPickerReady === '1') {
+                return;
+            }
+
+            const toggle = container.querySelector('[data-emoji-toggle]');
+            const panel = container.querySelector('[data-emoji-panel]');
+            const input = container.querySelector('[data-emoji-input]');
+
+            if (!(toggle instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement)) {
+                return;
+            }
+
+            container.dataset.emojiPickerReady = '1';
+            container.dataset.emojiPickerOpen = '0';
+            emojiPickerContainers.add(container);
+            panel.tabIndex = -1;
+
+            const closePanel = () => {
+                panel.classList.add('hidden');
+                toggle.setAttribute('aria-expanded', 'false');
+                container.dataset.emojiPickerOpen = '0';
+            };
+
+            const openPanel = () => {
+                closeAllEmojiPanels(container);
+                panel.classList.remove('hidden');
+                toggle.setAttribute('aria-expanded', 'true');
+                container.dataset.emojiPickerOpen = '1';
+                if (typeof panel.focus === 'function') {
+                    panel.focus();
+                }
+            };
+
+            toggle.addEventListener('click', (event) => {
+                event.preventDefault();
+                const isHidden = panel.classList.contains('hidden');
+                if (isHidden) {
+                    openPanel();
+                } else {
+                    closePanel();
+                }
+            });
+
+            panel.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    closePanel();
+                    toggle.focus();
+                }
+            });
+
+            const emojiButtons = panel.querySelectorAll('[data-emoji-value]');
+            emojiButtons.forEach((button) => {
+                if (!(button instanceof HTMLElement)) {
+                    return;
+                }
+
+                button.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    const emoji = button.dataset.emojiValue || button.textContent || '';
+                    if (!emoji) {
+                        return;
+                    }
+
+                    const target = input;
+                    const currentValue = target.value || '';
+                    const selectionStart = typeof target.selectionStart === 'number' ? target.selectionStart : currentValue.length;
+                    const selectionEnd = typeof target.selectionEnd === 'number' ? target.selectionEnd : currentValue.length;
+                    const before = currentValue.slice(0, selectionStart);
+                    const after = currentValue.slice(selectionEnd);
+                    const nextValue = before + emoji + after;
+
+                    target.value = nextValue;
+                    const caretPosition = selectionStart + emoji.length;
+
+                    if (typeof target.setSelectionRange === 'function') {
+                        target.focus();
+                        target.setSelectionRange(caretPosition, caretPosition);
+                    } else {
+                        target.focus();
+                    }
+
+                    target.dispatchEvent(new Event('input', { bubbles: true }));
+                    closePanel();
+                });
+            });
+        });
+    };
+
+    document.addEventListener('click', (event) => {
+        const target = event.target;
+        emojiPickerContainers.forEach((container) => {
+            if (!(container instanceof HTMLElement) || container.dataset.emojiPickerOpen !== '1') {
+                return;
+            }
+
+            if (container.contains(target)) {
+                return;
+            }
+
+            const toggle = container.querySelector('[data-emoji-toggle]');
+            const panel = container.querySelector('[data-emoji-panel]');
+            if (panel && !panel.classList.contains('hidden')) {
+                panel.classList.add('hidden');
+            }
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', 'false');
+            }
+            container.dataset.emojiPickerOpen = '0';
+        });
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            closeAllEmojiPanels();
+        }
+    });
+
+    initEmojiPickers();
 
     const feedContainer = document.querySelector('[data-community-feed]');
     if (feedContainer) {
@@ -1061,6 +1260,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             feedList.insertAdjacentHTML('beforeend', html);
+            initEmojiPickers();
         };
 
         const fetchNextBatch = async () => {

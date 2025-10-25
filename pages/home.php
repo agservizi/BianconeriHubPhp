@@ -176,6 +176,9 @@ for ($index = 0; $index < $maxItems; $index++) {
                     $pollTotalVotes = (int) ($post['poll_total_votes'] ?? 0);
                     $viewerPollChoice = $post['poll_viewer_choice'] ?? null;
                     $viewerHasVotedPoll = !empty($post['viewer_has_voted_poll']);
+                    $storyTitle = trim((string) ($post['story_title'] ?? ''));
+                    $storyCaption = trim((string) ($post['story_caption'] ?? ''));
+                    $storyCredit = trim((string) ($post['story_credit'] ?? ''));
                 ?>
                     <article class="fan-card px-5 py-6 space-y-3">
                         <div class="flex items-center justify-between text-xs uppercase tracking-wide text-gray-500">
@@ -185,6 +188,8 @@ for ($index = 0; $index < $maxItems; $index++) {
                                     <span class="text-gray-300">Foto</span>
                                 <?php elseif ($contentType === 'gallery'): ?>
                                     <span class="text-gray-300">Gallery</span>
+                                <?php elseif ($contentType === 'story'): ?>
+                                    <span class="text-gray-300">Storia</span>
                                 <?php elseif ($contentType === 'poll'): ?>
                                     <span class="text-gray-300">Sondaggio</span>
                                 <?php endif; ?>
@@ -209,9 +214,23 @@ for ($index = 0; $index < $maxItems; $index++) {
                                     <?php endif; ?>
                                 </div>
                             <?php endif; ?>
-                        <?php elseif ($contentType === 'photo' && $mediaUrl !== ''): ?>
+                        <?php elseif (in_array($contentType, ['photo', 'story'], true) && $mediaUrl !== ''): ?>
                             <div class="overflow-hidden rounded-2xl border border-white/10">
                                 <img src="<?php echo htmlspecialchars($mediaUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-56 w-full object-cover">
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if ($contentType === 'story'): ?>
+                            <div class="space-y-2">
+                                <?php if ($storyTitle !== ''): ?>
+                                    <h3 class="text-base font-semibold text-white"><?php echo htmlspecialchars($storyTitle, ENT_QUOTES, 'UTF-8'); ?></h3>
+                                <?php endif; ?>
+                                <?php if ($storyCaption !== ''): ?>
+                                    <p class="text-sm text-gray-300 leading-relaxed"><?php echo nl2br(htmlspecialchars($storyCaption, ENT_QUOTES, 'UTF-8')); ?></p>
+                                <?php endif; ?>
+                                <?php if ($storyCredit !== ''): ?>
+                                    <p class="text-xs uppercase tracking-wide text-gray-500">Credito: <?php echo htmlspecialchars($storyCredit, ENT_QUOTES, 'UTF-8'); ?></p>
+                                <?php endif; ?>
                             </div>
                         <?php endif; ?>
 

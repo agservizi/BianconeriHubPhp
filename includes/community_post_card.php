@@ -29,10 +29,14 @@ $pollOptions = is_array($post['poll_options'] ?? null) ? $post['poll_options'] :
 $pollTotalVotes = (int) ($post['poll_total_votes'] ?? 0);
 $viewerPollChoice = $post['poll_viewer_choice'] ?? null;
 $viewerHasVotedPoll = !empty($post['viewer_has_voted_poll']);
+$storyTitle = trim((string) ($post['story_title'] ?? ''));
+$storyCaption = trim((string) ($post['story_caption'] ?? ''));
+$storyCredit = trim((string) ($post['story_credit'] ?? ''));
 $parentPrefillId = isset($oldCommentParentId) ? (int) $oldCommentParentId : 0;
 $commentPrefill = ($oldCommentPostId === $postId && $parentPrefillId === 0) ? $oldCommentBody : '';
 $replyPrefillId = ($oldCommentPostId === $postId && $parentPrefillId > 0) ? $parentPrefillId : 0;
 $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
+$communityEmojiOptions = getCommunityEmojiOptions();
 ?>
 <article id="post-<?php echo $postId; ?>" class="fan-card px-5 py-6 space-y-4" data-community-post>
     <div class="flex flex-col gap-2 text-xs uppercase tracking-wide text-gray-500 sm:flex-row sm:items-center sm:justify-between">
@@ -49,6 +53,8 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
                     <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Foto</span>
                 <?php elseif ($contentType === 'gallery'): ?>
                     <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Gallery</span>
+                <?php elseif ($contentType === 'story'): ?>
+                    <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Storia</span>
                 <?php elseif ($contentType === 'poll'): ?>
                     <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Sondaggio</span>
                 <?php endif; ?>
@@ -93,9 +99,23 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
-    <?php elseif ($contentType === 'photo' && $mediaUrl !== ''): ?>
+    <?php elseif (in_array($contentType, ['photo', 'story'], true) && $mediaUrl !== ''): ?>
         <div class="overflow-hidden rounded-2xl border border-white/10">
             <img src="<?php echo htmlspecialchars($mediaUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-64 w-full object-cover">
+        </div>
+    <?php endif; ?>
+
+    <?php if ($contentType === 'story'): ?>
+        <div class="space-y-2">
+            <?php if ($storyTitle !== ''): ?>
+                <h2 class="text-lg font-semibold text-white"><?php echo htmlspecialchars($storyTitle, ENT_QUOTES, 'UTF-8'); ?></h2>
+            <?php endif; ?>
+            <?php if ($storyCaption !== ''): ?>
+                <p class="text-sm text-gray-300 leading-relaxed"><?php echo nl2br(htmlspecialchars($storyCaption, ENT_QUOTES, 'UTF-8')); ?></p>
+            <?php endif; ?>
+            <?php if ($storyCredit !== ''): ?>
+                <p class="text-xs uppercase tracking-wide text-gray-500">Credito: <?php echo htmlspecialchars($storyCredit, ENT_QUOTES, 'UTF-8'); ?></p>
+            <?php endif; ?>
         </div>
     <?php endif; ?>
 
@@ -191,7 +211,7 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
     </div>
 
     <?php
-    $renderCommunityComment = static function (array $comment, int $depth = 0) use (&$renderCommunityComment, $isLoggedIn, $postId, $replyPrefillId, $replyPrefillBody) {
+    $renderCommunityComment = static function (array $comment, int $depth = 0) use (&$renderCommunityComment, $isLoggedIn, $postId, $replyPrefillId, $replyPrefillBody, $communityEmojiOptions) {
         $commentId = (int) ($comment['id'] ?? 0);
         if ($commentId <= 0) {
             return '';
@@ -257,7 +277,24 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
                         <input type="hidden" name="post_id" value="<?php echo $postId; ?>">
                         <input type="hidden" name="parent_comment_id" value="<?php echo $commentId; ?>">
                         <input type="hidden" name="redirect_to" value="<?php echo htmlspecialchars($commentAnchor, ENT_QUOTES, 'UTF-8'); ?>">
-                        <textarea name="message" rows="3" class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" placeholder="Rispondi a questo commento..."><?php echo htmlspecialchars($replyValue, ENT_QUOTES, 'UTF-8'); ?></textarea>
+                        <div class="space-y-2" data-emoji-picker>
+                            <textarea name="message" rows="3" class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" placeholder="Rispondi a questo commento..." data-emoji-input><?php echo htmlspecialchars($replyValue, ENT_QUOTES, 'UTF-8'); ?></textarea>
+                            <div class="flex items-center justify-between">
+                                <div class="relative inline-block">
+                                    <button type="button" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1.5 text-[0.65rem] font-semibold uppercase tracking-wide text-white transition-all hover:bg-white hover:text-black" data-emoji-toggle aria-expanded="false" aria-haspopup="true">
+                                        <span>Emoji</span>
+                                        <span aria-hidden="true">😊</span>
+                                    </button>
+                                    <div class="absolute left-0 z-20 mt-2 hidden w-52 rounded-2xl border border-white/10 bg-black/90 p-2 shadow-xl" data-emoji-panel role="listbox">
+                                        <div class="grid grid-cols-6 gap-1">
+                                            <?php foreach ($communityEmojiOptions as $emoji): ?>
+                                                <button type="button" class="flex h-8 w-8 items-center justify-center rounded-full text-lg transition-colors hover:bg-white/15" data-emoji-value="<?php echo htmlspecialchars($emoji, ENT_QUOTES, 'UTF-8'); ?>" role="option"><?php echo htmlspecialchars($emoji, ENT_QUOTES, 'UTF-8'); ?></button>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <div class="flex justify-end">
                             <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-black transition-all hover:bg-juventus-silver">
                                 Invia risposta
@@ -298,7 +335,24 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
             <input type="hidden" name="post_id" value="<?php echo $postId; ?>">
             <input type="hidden" name="parent_comment_id" value="0">
             <input type="hidden" name="redirect_to" value="?page=community#post-<?php echo $postId; ?>">
-            <textarea name="message" rows="3" class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" placeholder="Scrivi un pensiero per la curva..."><?php echo htmlspecialchars($commentPrefill, ENT_QUOTES, 'UTF-8'); ?></textarea>
+               <div class="space-y-2" data-emoji-picker>
+                   <textarea name="message" rows="3" class="w-full rounded-2xl bg-black/60 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" placeholder="Scrivi un pensiero per la curva..." data-emoji-input><?php echo htmlspecialchars($commentPrefill, ENT_QUOTES, 'UTF-8'); ?></textarea>
+                   <div class="flex items-center justify-between">
+                       <div class="relative inline-block">
+                           <button type="button" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white transition-all hover:bg-white hover:text-black" data-emoji-toggle aria-expanded="false" aria-haspopup="true">
+                               <span>Emoji</span>
+                               <span aria-hidden="true">😊</span>
+                           </button>
+                           <div class="absolute left-0 z-20 mt-2 hidden w-56 rounded-2xl border border-white/10 bg-black/90 p-2 shadow-xl" data-emoji-panel role="listbox">
+                               <div class="grid grid-cols-6 gap-1">
+                                   <?php foreach ($communityEmojiOptions as $emoji): ?>
+                                       <button type="button" class="flex h-9 w-9 items-center justify-center rounded-full text-lg transition-colors hover:bg-white/15" data-emoji-value="<?php echo htmlspecialchars($emoji, ENT_QUOTES, 'UTF-8'); ?>" role="option"><?php echo htmlspecialchars($emoji, ENT_QUOTES, 'UTF-8'); ?></button>
+                                   <?php endforeach; ?>
+                               </div>
+                           </div>
+                       </div>
+                   </div>
+               </div>
             <div class="flex justify-end">
                 <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-black transition-all hover:bg-juventus-silver">
                     Commenta
