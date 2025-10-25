@@ -8,20 +8,30 @@ $feedFetchSize = $feedPageSize + 1;
 
 $composerAvatarUrl = '';
 $composerCoverPath = '';
-$composerInitials = strtoupper(substr((string) ($loggedUser['username'] ?? 'BH'), 0, 2));
+$composerDisplayName = '';
+$composerHandle = '';
+$composerInitials = 'BH';
 $composerMetaClass = 'text-xs uppercase tracking-wide text-gray-500';
 
 if ($isLoggedIn && $loggedUser) {
     $composerAvatarUrl = trim((string) ($loggedUser['avatar_url'] ?? ''));
+    $composerDisplayName = trim((string) ($loggedUser['display_name'] ?? buildUserDisplayName($loggedUser['first_name'] ?? null, $loggedUser['last_name'] ?? null, (string) ($loggedUser['username'] ?? 'BianconeriHub'))));
+    $composerHandle = trim((string) ($loggedUser['username'] ?? ''));
+    $initialsSource = $composerDisplayName !== '' ? $composerDisplayName : ($composerHandle !== '' ? $composerHandle : 'BH');
+    $composerInitials = strtoupper(substr($initialsSource, 0, 2));
 
-    if (!empty($loggedUser['username'])) {
-        $composerProfileView = getUserProfileView((string) $loggedUser['username'], $viewerId) ?: [];
+    if ($composerHandle !== '') {
+        $composerProfileView = getUserProfileView((string) $composerHandle, $viewerId) ?: [];
         $composerCoverPath = trim((string) ($composerProfileView['cover_path'] ?? ''));
     }
 
     if ($composerCoverPath !== '') {
         $composerMetaClass = 'text-xs uppercase tracking-wide text-gray-200';
     }
+}
+
+if ($composerDisplayName === '') {
+    $composerDisplayName = 'BianconeriHub';
 }
 
 if (!function_exists('renderCommunityPostCard')) {
@@ -70,7 +80,9 @@ if (isset($_GET['community_feed'])) {
 
 $registeredUsers = getRegisteredUsers();
 $stats = getCommunityStats();
-$newsItems = array_slice(getNewsItems(), 0, 5);
+$allNewsItems = getNewsItems();
+$newsItems = array_slice($allNewsItems, 0, 5);
+$composerNewsOptions = array_slice($allNewsItems, 0, 10);
 $matches = array_slice(getUpcomingMatches(), 0, 4);
 $communityEmojiOptions = getCommunityEmojiOptions();
 
@@ -89,7 +101,7 @@ $oldCommentPostId = (int) getOldInput('community_comment_post_id', 0);
 $oldCommentParentId = (int) getOldInput('community_comment_parent_id', 0);
 $oldMessage = getOldInput('message');
 $oldComposerMode = strtolower((string) getOldInput('composer_mode', 'text'));
-if (!in_array($oldComposerMode, ['text', 'photo', 'poll', 'story'], true)) {
+if (!in_array($oldComposerMode, ['text', 'photo', 'poll', 'story', 'news'], true)) {
     $oldComposerMode = 'text';
 }
 $oldPollQuestion = (string) getOldInput('poll_question', '');
@@ -106,12 +118,78 @@ $oldPollOptions = array_pad($oldPollOptions, 4, '');
 $oldStoryTitle = (string) getOldInput('story_title', '');
 $oldStoryCaption = (string) getOldInput('story_caption', '');
 $oldStoryCredit = (string) getOldInput('story_credit', '');
+$oldSharedNewsId = (int) getOldInput('shared_news_id', 0);
+$prefilledNewsItem = null;
+$incomingShareNewsId = isset($_GET['share_news_id']) ? (int) $_GET['share_news_id'] : 0;
+$incomingShareNewsSlug = trim((string) ($_GET['share_news_slug'] ?? ''));
+$incomingShareParam = isset($_GET['share_news']) ? trim((string) $_GET['share_news']) : '';
+if ($incomingShareNewsId <= 0 && $incomingShareParam !== '') {
+    if (ctype_digit($incomingShareParam)) {
+        $incomingShareNewsId = (int) $incomingShareParam;
+    } elseif ($incomingShareNewsSlug === '') {
+        $incomingShareNewsSlug = $incomingShareParam;
+    }
+}
+
+if ($oldSharedNewsId <= 0) {
+    $incomingSelection = null;
+    if ($incomingShareNewsId > 0) {
+        $incomingSelection = findNewsItemById($incomingShareNewsId);
+    }
+    if (!$incomingSelection && $incomingShareNewsSlug !== '') {
+        $incomingSelection = findNewsItemBySlug($incomingShareNewsSlug);
+    }
+
+    if ($incomingSelection) {
+        $resolvedNewsId = (int) ($incomingSelection['id'] ?? 0);
+        if ($resolvedNewsId > 0) {
+            $oldSharedNewsId = $resolvedNewsId;
+            $oldComposerMode = 'news';
+            $prefilledNewsItem = $incomingSelection;
+        }
+    }
+}
 $oldComposerAction = strtolower((string) getOldInput('composer_action', 'publish'));
 if (!in_array($oldComposerAction, ['publish', 'schedule', 'draft'], true)) {
     $oldComposerAction = 'publish';
 }
 $oldScheduleAt = (string) getOldInput('schedule_at', '');
 $oldDraftId = (int) getOldInput('draft_id', 0);
+$oldExistingMedia = getOldInput('existing_media', []);
+if (!is_array($oldExistingMedia)) {
+    $oldExistingMedia = [];
+}
+$oldExistingMedia = array_values(array_unique(array_map('intval', $oldExistingMedia)));
+$existingMediaCount = 0;
+foreach ($oldExistingMedia as $mediaId) {
+    if ($mediaId > 0) {
+        $existingMediaCount++;
+    }
+}
+
+if ($oldSharedNewsId > 0) {
+    $hasOldNews = false;
+    foreach ($composerNewsOptions as $option) {
+        if ((int) ($option['id'] ?? 0) === $oldSharedNewsId) {
+            $hasOldNews = true;
+            if ($prefilledNewsItem === null) {
+                $prefilledNewsItem = $option;
+            }
+            break;
+        }
+    }
+
+    if (!$hasOldNews) {
+        $selectedNewsOption = findNewsItemById($oldSharedNewsId);
+        if ($selectedNewsOption) {
+            array_unshift($composerNewsOptions, $selectedNewsOption);
+            $composerNewsOptions = array_slice($composerNewsOptions, 0, 10);
+            if ($prefilledNewsItem === null) {
+                $prefilledNewsItem = $selectedNewsOption;
+            }
+        }
+    }
+}
 
 $posts = getCommunityPosts(0, $feedFetchSize);
 $hasMorePosts = count($posts) > $feedPageSize;
@@ -166,11 +244,18 @@ $pushHasFollowing = $pushFollowingCount > 0;
                     <span class="text-xs text-gray-500"><?php echo number_format($stats['members'] ?? count($registeredUsers)); ?> totali</span>
                 </div>
                 <ul class="space-y-3 text-sm text-gray-200">
-                    <?php foreach ($recentMembers as $user): ?>
+                    <?php foreach ($recentMembers as $user):
+                        $memberDisplay = trim((string) ($user['display_name'] ?? ''));
+                        $memberHandle = trim((string) ($user['username'] ?? ''));
+                        $memberLabel = $memberDisplay !== '' ? $memberDisplay : ($memberHandle !== '' ? $memberHandle : 'Tifoso');
+                    ?>
                         <li class="flex items-center justify-between gap-3">
                             <div>
-                                <p class="font-semibold text-white"><?php echo htmlspecialchars($user['username'], ENT_QUOTES, 'UTF-8'); ?></p>
+                                <p class="font-semibold text-white"><?php echo htmlspecialchars($memberLabel, ENT_QUOTES, 'UTF-8'); ?></p>
                                 <p class="text-xs uppercase tracking-wide text-gray-500"><?php echo htmlspecialchars($user['badge'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8'); ?></p>
+                                <?php if ($memberHandle !== '' && strcasecmp($memberHandle, $memberLabel) !== 0): ?>
+                                    <p class="text-xs text-gray-500">@<?php echo htmlspecialchars($memberHandle, ENT_QUOTES, 'UTF-8'); ?></p>
+                                <?php endif; ?>
                             </div>
                             <span class="text-xs text-gray-500"><?php echo htmlspecialchars(getHumanTimeDiff($user['created_at'] ?? time()), ENT_QUOTES, 'UTF-8'); ?></span>
                         </li>
@@ -189,23 +274,46 @@ $pushHasFollowing = $pushFollowingCount > 0;
                 <div class="relative flex flex-col gap-4 lg:flex-row lg:items-start">
                     <div class="flex h-10 w-10 overflow-hidden rounded-full border border-white/20 bg-white/10 text-sm font-semibold text-white">
                         <?php if ($composerAvatarUrl !== ''): ?>
-                            <img src="<?php echo htmlspecialchars($composerAvatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($loggedUser['username'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full object-cover">
+                            <img src="<?php echo htmlspecialchars($composerAvatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($composerDisplayName !== '' ? $composerDisplayName : ($composerHandle !== '' ? $composerHandle : 'Tifoso'), ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full object-cover">
                         <?php else: ?>
                             <span class="flex h-full w-full items-center justify-center"><?php echo htmlspecialchars($composerInitials, ENT_QUOTES, 'UTF-8'); ?></span>
                         <?php endif; ?>
                     </div>
                     <div class="flex-1">
                         <div class="flex items-center justify-between">
-                            <p class="text-sm font-semibold text-white"><?php echo htmlspecialchars($loggedUser['username'] ?? 'BianconeriHub', ENT_QUOTES, 'UTF-8'); ?></p>
+                            <p class="text-sm font-semibold text-white"><?php echo htmlspecialchars($composerDisplayName, ENT_QUOTES, 'UTF-8'); ?><?php if ($composerHandle !== ''): ?><span class="ml-2 text-xs uppercase tracking-wide text-white/60">@<?php echo htmlspecialchars($composerHandle, ENT_QUOTES, 'UTF-8'); ?></span><?php endif; ?></p>
                             <span class="<?php echo $composerMetaClass; ?>"><?php echo htmlspecialchars($stats['posts'] > 0 ? 'Thread attivi ' . number_format($stats['posts'], 0, ',', '.') : 'Thread in partenza', ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                         <?php if ($isLoggedIn && $loggedUser): ?>
-                            <form action="" method="post" enctype="multipart/form-data" class="mt-3 space-y-4" data-community-composer data-composer-max-attachments="<?php echo (int) $maxComposerAttachments; ?>">
+                            <form action="" method="post" enctype="multipart/form-data" class="mt-3 space-y-4" id="community-composer" data-community-composer data-composer-max-attachments="<?php echo (int) $maxComposerAttachments; ?>" data-composer-selected-news="<?php echo htmlspecialchars($oldSharedNewsId > 0 ? (string) $oldSharedNewsId : '', ENT_QUOTES, 'UTF-8'); ?>" data-composer-existing-media-count="<?php echo (int) $existingMediaCount; ?>">
                                 <input type="hidden" name="form_type" value="community_post">
                                 <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
                                 <input type="hidden" name="composer_mode" value="<?php echo htmlspecialchars($oldComposerMode, ENT_QUOTES, 'UTF-8'); ?>" data-composer-mode-input>
                                 <input type="hidden" name="composer_action" value="<?php echo htmlspecialchars($oldComposerAction, ENT_QUOTES, 'UTF-8'); ?>" data-composer-action-input>
                                 <input type="hidden" name="draft_id" value="<?php echo $oldDraftId; ?>" data-composer-draft-id>
+                                <?php if (!empty($oldExistingMedia)): ?>
+                                    <?php foreach ($oldExistingMedia as $existingMediaId): ?>
+                                        <?php if ($existingMediaId > 0): ?>
+                                            <input type="hidden" name="existing_media[]" value="<?php echo (int) $existingMediaId; ?>" data-composer-existing-media>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                                <?php if ($prefilledNewsItem !== null): ?>
+                                    <input type="hidden" name="shared_news_slug" value="<?php echo htmlspecialchars((string) ($prefilledNewsItem['slug'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
+                                <?php endif; ?>
+                                <?php if ($prefilledNewsItem !== null && $oldComposerMode === 'news'): ?>
+                                    <?php
+                                    $prefillTitle = trim((string) ($prefilledNewsItem['title'] ?? ''));
+                                    $prefillTag = trim((string) ($prefilledNewsItem['tag'] ?? ''));
+                                    ?>
+                                    <div class="rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-xs text-gray-200" data-composer-news-prefill>
+                                        <p class="text-sm font-semibold text-white">Condividi con la community: <?php echo htmlspecialchars($prefillTitle, ENT_QUOTES, 'UTF-8'); ?></p>
+                                        <?php if ($prefillTag !== ''): ?>
+                                            <p class="mt-1 text-xs uppercase tracking-wide text-gray-300">#<?php echo htmlspecialchars($prefillTag, ENT_QUOTES, 'UTF-8'); ?></p>
+                                        <?php endif; ?>
+                                        <p class="mt-2 text-xs text-gray-300">Aggiungi un commento personale e pubblica per avviare la discussione.</p>
+                                    </div>
+                                <?php endif; ?>
                                 <div class="space-y-2" data-emoji-picker>
                                     <textarea
                                         name="message"
@@ -218,6 +326,7 @@ $pushHasFollowing = $pushFollowingCount > 0;
                                         data-placeholder-photo="Aggiungi una descrizione alla foto bianconera che vuoi condividere..."
                                         data-placeholder-poll="Spiega il contesto del sondaggio o aggiungi un commento iniziale..."
                                         data-placeholder-story="Anticipa la tua storia bianconera con poche parole..."
+                                        data-placeholder-news="Aggiungi un commento per accompagnare la news che vuoi condividere..."
                                     ><?php echo htmlspecialchars($oldMessage, ENT_QUOTES, 'UTF-8'); ?></textarea>
                                     <div class="relative inline-block">
                                         <button type="button" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white transition-all hover:bg-white hover:text-black" data-emoji-toggle aria-expanded="false" aria-haspopup="true">
@@ -240,6 +349,7 @@ $pushHasFollowing = $pushFollowingCount > 0;
                                             'text' => 'Testo',
                                             'photo' => 'Foto',
                                             'story' => 'Storia',
+                                            'news' => 'News',
                                             'poll' => 'Sondaggio',
                                         ];
                                         foreach ($composerModes as $modeKey => $modeLabel):
@@ -277,6 +387,61 @@ $pushHasFollowing = $pushFollowingCount > 0;
                                         data-composer-schedule-input
                                     >
                                     <p class="mt-2 text-[0.65rem] uppercase tracking-wide text-gray-500">Programma con almeno cinque minuti di anticipo.</p>
+                                </div>
+                                <div class="space-y-3 <?php echo $oldComposerMode === 'news' ? '' : 'hidden'; ?>" data-composer-news-section>
+                                    <div class="space-y-2">
+                                        <label class="block text-xs font-semibold uppercase tracking-wide text-gray-400">Condividi una news</label>
+                                        <?php if (!empty($composerNewsOptions)): ?>
+                                            <div class="space-y-2">
+                                                <?php foreach ($composerNewsOptions as $index => $newsOption):
+                                                    $newsId = (int) ($newsOption['id'] ?? 0);
+                                                    $newsTitle = trim((string) ($newsOption['title'] ?? ''));
+                                                    if ($newsId <= 0 || $newsTitle === '') {
+                                                        continue;
+                                                    }
+
+                                                    $newsTag = trim((string) ($newsOption['tag'] ?? ''));
+                                                    $newsImage = trim((string) ($newsOption['image'] ?? ''));
+                                                    $newsExcerptFull = trim((string) ($newsOption['excerpt'] ?? ''));
+                                                    $newsExcerpt = $newsExcerptFull !== '' ? mb_substr($newsExcerptFull, 0, 180) : '';
+                                                    $isExcerptTruncated = $newsExcerptFull !== '' && mb_strlen($newsExcerptFull) > mb_strlen($newsExcerpt);
+                                                    $isChecked = $oldSharedNewsId > 0 ? ($oldSharedNewsId === $newsId) : ($index === 0);
+                                                    ?>
+                                                    <label class="flex gap-3 rounded-2xl border border-white/10 bg-black/50 p-3 text-left text-sm text-gray-200 transition-shadow hover:border-white/30 hover:shadow-lg">
+                                                        <input
+                                                            type="radio"
+                                                            name="shared_news_id"
+                                                            value="<?php echo $newsId; ?>"
+                                                            class="mt-1 h-4 w-4 flex-shrink-0 border-white/20 bg-black/60 text-white focus:ring-white"
+                                                            data-composer-news-option
+                                                            <?php echo $isChecked ? 'checked' : ''; ?>
+                                                            <?php echo $oldComposerMode === 'news' ? 'required' : ''; ?>
+                                                            <?php echo $oldComposerMode === 'news' ? '' : 'disabled'; ?>
+                                                        >
+                                                        <div class="flex flex-1 gap-3">
+                                                            <?php if ($newsImage !== ''): ?>
+                                                                <div class="h-16 w-16 flex-shrink-0 overflow-hidden rounded-xl border border-white/10">
+                                                                    <img src="<?php echo htmlspecialchars($newsImage, ENT_QUOTES, 'UTF-8'); ?>" alt="Anteprima news" class="h-full w-full object-cover">
+                                                                </div>
+                                                            <?php endif; ?>
+                                                            <div class="flex-1 space-y-1">
+                                                                <?php if ($newsTag !== ''): ?>
+                                                                    <span class="inline-flex rounded-full bg-white/10 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-white/80">#<?php echo htmlspecialchars($newsTag, ENT_QUOTES, 'UTF-8'); ?></span>
+                                                                <?php endif; ?>
+                                                                <p class="font-semibold text-white leading-snug"><?php echo htmlspecialchars($newsTitle, ENT_QUOTES, 'UTF-8'); ?></p>
+                                                                <?php if ($newsExcerpt !== ''): ?>
+                                                                    <p class="text-xs text-gray-400"><?php echo htmlspecialchars($newsExcerpt, ENT_QUOTES, 'UTF-8'); ?><?php echo $isExcerptTruncated ? '…' : ''; ?></p>
+                                                                <?php endif; ?>
+                                                            </div>
+                                                        </div>
+                                                    </label>
+                                                <?php endforeach; ?>
+                                            </div>
+                                            <p class="text-xs text-gray-500">La news selezionata verrà mostrata con anteprima nel tuo post.</p>
+                                        <?php else: ?>
+                                            <p class="text-xs text-gray-400" data-composer-news-empty>Nessuna news disponibile da condividere in questo momento.</p>
+                                        <?php endif; ?>
+                                    </div>
                                 </div>
                                 <div class="space-y-3 <?php echo in_array($oldComposerMode, ['photo', 'story'], true) ? '' : 'hidden'; ?>" data-composer-photo-section>
                                     <div class="space-y-2">

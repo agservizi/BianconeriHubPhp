@@ -30,6 +30,13 @@ Portale community dedicato ai tifosi juventini con news reali, calendario partit
    SESSION_NAME=bianconerihub_session
    ```
 
+   Per le email transazionali, aggiungi le variabili dedicate a [Resend](https://resend.com/):
+   ```env
+   RESEND_API_KEY="re_xxx"
+   MAIL_FROM_ADDRESS="notifiche@bianconerihub.com"
+   MAIL_FROM_NAME="BianconeriHub"
+   ```
+
 2. Importa/aggiorna lo schema database:
    ```bash
    mysql -u your_user -p your_database < database/schema.sql
@@ -72,6 +79,19 @@ Portale community dedicato ai tifosi juventini con news reali, calendario partit
    >   KEY community_followers_follower_id_foreign (follower_id),
    >   CONSTRAINT community_followers_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE,
    >   CONSTRAINT community_followers_follower_id_foreign FOREIGN KEY (follower_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+   > -- Recupero password (ottobre 2025)
+   > CREATE TABLE IF NOT EXISTS password_resets (
+   >   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+   >   user_id INT UNSIGNED NOT NULL,
+   >   token_hash CHAR(64) NOT NULL,
+   >   expires_at DATETIME NOT NULL,
+   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   >   UNIQUE KEY password_resets_token_hash_unique (token_hash),
+   >   KEY password_resets_user_id_foreign (user_id),
+   >   KEY password_resets_expires_at_index (expires_at),
+   >   CONSTRAINT password_resets_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
    > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
    > -- Community commenti: risposte e like (ottobre 2025)

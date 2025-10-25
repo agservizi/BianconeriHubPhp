@@ -6,6 +6,7 @@ $loggedUser = getLoggedInUser();
 $oldComment = getOldInput('news_comment');
 $engagement = ['likes' => 0, 'comments' => 0, 'liked' => false];
 $comments = [];
+$whatsAppShareUrl = null;
 
 if ($article && !empty($article['published_at'])) {
     try {
@@ -32,6 +33,11 @@ if ($article) {
     $metrics = getNewsEngagementSummary([$article['id']], $loggedUser['id'] ?? null);
     if (isset($metrics[$article['id']])) {
         $engagement = $metrics[$article['id']];
+    }
+
+    if ($shareUrl !== null) {
+        $encodedWhatsAppMessage = rawurlencode(trim(($article['title'] ?? '') . ' - ' . $shareUrl));
+        $whatsAppShareUrl = 'https://wa.me/?text=' . $encodedWhatsAppMessage;
     }
 
     $comments = getNewsComments($article['id']);
@@ -123,12 +129,37 @@ if ($article) {
                 </svg>
                 Torna alle notizie
             </a>
-            <a href="mailto:?subject=<?php echo rawurlencode('Consiglio lettura: ' . ($article['title'] ?? '')); ?>&body=<?php echo rawurlencode(($article['title'] ?? '') . "\n\nLeggi l'articolo su BianconeriHub: " . ($shareUrl ?? '')); ?>" class="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-all">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.5a2.25 2.25 0 0 1-2.26 0l-7.5-4.5A2.25 2.25 0 0 1 2.25 6.993V6.75" />
-                </svg>
-                Condividi via email
-            </a>
+            <div class="flex items-center gap-3">
+                <?php if ($loggedUser && isset($article['id'])): ?>
+                    <a href="?page=community&amp;share_news=<?php echo (int) $article['id']; ?>#community-composer" class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-black transition-all hover:bg-juventus-silver">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-4 w-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M18 9a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 9a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 21a3.75 3.75 0 0 0-7.5 0v0" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21v-.75A4.5 4.5 0 0 1 6.75 15h.5" />
+                        </svg>
+                        Condividi con la community
+                    </a>
+                <?php elseif (!$loggedUser): ?>
+                    <a href="?page=login" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white/80 transition-all hover:text-white">
+                        Accedi per condividere nella community
+                    </a>
+                <?php endif; ?>
+                <a href="mailto:?subject=<?php echo rawurlencode('Consiglio lettura: ' . ($article['title'] ?? '')); ?>&body=<?php echo rawurlencode(($article['title'] ?? '') . "\n\nLeggi l'articolo su BianconeriHub: " . ($shareUrl ?? '')); ?>" class="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-all">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.5a2.25 2.25 0 0 1-2.26 0l-7.5-4.5A2.25 2.25 0 0 1 2.25 6.993V6.75" />
+                    </svg>
+                    Condividi via email
+                </a>
+                <?php if ($whatsAppShareUrl !== null): ?>
+                    <a href="<?php echo htmlspecialchars($whatsAppShareUrl, ENT_QUOTES, 'UTF-8'); ?>" target="_blank" rel="noopener" class="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-all">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="currentColor" class="w-4 h-4">
+                            <path d="M16.04 4a11.96 11.96 0 0 0-10.3 18.06L4 28l6.11-1.73A11.95 11.95 0 1 0 16.04 4Zm5.63 17.52c-.24.68-1.4 1.3-1.93 1.34-.49.04-.97.2-3.31-.68-2.79-1.1-4.56-3.9-4.7-4.09-.14-.19-1.12-1.49-1.12-2.83s.71-2.01.96-2.29c.25-.28.55-.35.73-.35.19 0 .35 0 .5.01.16.01.38-.06.6.46.23.55.78 1.9.85 2.04.07.14.12.3.02.48-.09.19-.14.3-.28.46-.14.16-.29.37-.41.5-.14.14-.28.3-.12.58.16.28.72 1.18 1.54 1.92 1.06.95 1.95 1.24 2.23 1.38.28.14.44.12.6-.07.16-.19.7-.82.89-1.1.19-.28.37-.23.63-.14.26.09 1.62.76 1.9.9.28.14.46.21.53.33.08.12.08.71-.16 1.39Z"/>
+                        </svg>
+                        Condividi su WhatsApp
+                    </a>
+                <?php endif; ?>
+            </div>
         </div>
 
         <section class="space-y-4 rounded-2xl border border-gray-800 bg-black/60 px-5 py-6">
@@ -150,18 +181,38 @@ if ($article) {
             <?php endif; ?>
 
             <div class="space-y-4">
-                <?php foreach ($comments as $comment): ?>
+                <?php foreach ($comments as $comment):
+                    $commentDisplay = trim((string) ($comment['display_name'] ?? $comment['username'] ?? 'Tifoso'));
+                    $commentHandle = trim((string) ($comment['username'] ?? ''));
+                    $avatarUrl = trim((string) ($comment['avatar_url'] ?? ''));
+                    $initialsSource = $commentDisplay !== '' ? $commentDisplay : ($commentHandle !== '' ? $commentHandle : 'BH');
+                    $initials = strtoupper(substr($initialsSource, 0, 2));
+                ?>
                     <article class="rounded-2xl border border-gray-800 bg-black/50 px-4 py-3 text-sm">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="font-semibold text-white"><?php echo htmlspecialchars($comment['username'], ENT_QUOTES, 'UTF-8'); ?></span>
-                                <?php if (!empty($comment['badge'])): ?>
-                                    <span class="badge-accent"><?php echo htmlspecialchars($comment['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
+                        <div class="flex gap-3">
+                            <div class="flex h-10 w-10 shrink-0 overflow-hidden rounded-full border border-white/15 bg-white/5 text-xs font-semibold text-white">
+                                <?php if ($avatarUrl !== ''): ?>
+                                    <img src="<?php echo htmlspecialchars($avatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($commentDisplay !== '' ? $commentDisplay : ($commentHandle !== '' ? '@' . $commentHandle : 'Tifoso'), ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full object-cover">
+                                <?php else: ?>
+                                    <span class="flex h-full w-full items-center justify-center"><?php echo htmlspecialchars($initials, ENT_QUOTES, 'UTF-8'); ?></span>
                                 <?php endif; ?>
                             </div>
-                            <span class="text-xs text-gray-500 uppercase tracking-wide"><?php echo htmlspecialchars(getHumanTimeDiff($comment['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
+                            <div class="flex-1 space-y-2">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span class="font-semibold text-white"><?php echo htmlspecialchars($commentDisplay, ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <?php if ($commentHandle !== '' && strcasecmp($commentDisplay, $commentHandle) !== 0): ?>
+                                            <span class="text-xs text-gray-400">@<?php echo htmlspecialchars($commentHandle, ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <?php endif; ?>
+                                        <?php if (!empty($comment['badge'])): ?>
+                                            <span class="badge-accent"><?php echo htmlspecialchars($comment['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <span class="text-xs text-gray-500 uppercase tracking-wide"><?php echo htmlspecialchars(getHumanTimeDiff($comment['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
+                                </div>
+                                <p class="text-gray-300 leading-relaxed"><?php echo nl2br(htmlspecialchars($comment['content'], ENT_QUOTES, 'UTF-8')); ?></p>
+                            </div>
                         </div>
-                        <p class="mt-2 text-gray-300 leading-relaxed"><?php echo nl2br(htmlspecialchars($comment['content'], ENT_QUOTES, 'UTF-8')); ?></p>
                     </article>
                 <?php endforeach; ?>
 

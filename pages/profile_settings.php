@@ -13,6 +13,9 @@ $baseProfile = [
     'username' => $currentUser['username'] ?? 'Tifoso',
     'email' => $currentUser['email'] ?? '',
     'badge' => $currentUser['badge'] ?? 'Tifoso',
+    'first_name' => $currentUser['first_name'] ?? null,
+    'last_name' => $currentUser['last_name'] ?? null,
+    'display_name' => $currentUser['display_name'] ?? null,
     'avatar_url' => null,
     'created_at' => time(),
     'updated_at' => null,
@@ -41,14 +44,19 @@ $joinedLabel = formatItalianDate($joinDateTime);
 
 $lastUpdateLabel = 'Non disponibile';
 if (!empty($userDetails['updated_at'])) {
-    $lastUpdateLabel = getHumanTimeDiff((int) $userDetails['updated_at']) . ' fa';
+    $lastUpdateLabel = getHumanTimeDiff((int) $userDetails['updated_at']);
 }
 
+$displayName = trim((string) ($userDetails['display_name'] ?? buildUserDisplayName($userDetails['first_name'] ?? null, $userDetails['last_name'] ?? null, (string) ($userDetails['username'] ?? 'Tifoso'))));
+$handle = trim((string) ($userDetails['username'] ?? ''));
 $avatarUrl = trim((string) ($userDetails['avatar_url'] ?? ''));
 $coverPath = trim((string) ($userDetails['cover_path'] ?? ''));
 $coverUrl = $coverPath !== '' ? $coverPath : '';
-$initials = strtoupper(substr($userDetails['username'] ?? 'BH', 0, 2));
+$initialsSource = $displayName !== '' ? $displayName : ($userDetails['username'] ?? 'BH');
+$initials = strtoupper(substr($initialsSource, 0, 2));
 
+$firstNameValue = (string) getOldInput('first_name', $userDetails['first_name'] ?? '');
+$lastNameValue = (string) getOldInput('last_name', $userDetails['last_name'] ?? '');
 $bioValue = (string) getOldInput('bio', $userDetails['bio'] ?? '');
 $locationValue = (string) getOldInput('location', $userDetails['location'] ?? '');
 $websiteValue = (string) getOldInput('website', $userDetails['website'] ?? '');
@@ -76,7 +84,7 @@ $number = static function ($value): string {
                     <div class="relative mb-4 sm:-mb-14 rounded-full border-4 border-black/70 bg-white/10 shadow-xl mx-auto sm:mx-0">
                         <div class="h-24 w-24 sm:h-28 sm:w-28 lg:h-28 lg:w-28 overflow-hidden rounded-full bg-white/5 text-3xl font-semibold text-white">
                             <?php if ($avatarUrl !== ''): ?>
-                                <img src="<?php echo htmlspecialchars($avatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($userDetails['username'], ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full object-cover">
+                                <img src="<?php echo htmlspecialchars($avatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($displayName !== '' ? $displayName : $handle, ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full object-cover">
                             <?php else: ?>
                                 <div class="flex h-full w-full items-center justify-center">
                                     <?php echo htmlspecialchars($initials, ENT_QUOTES, 'UTF-8'); ?>
@@ -86,8 +94,11 @@ $number = static function ($value): string {
                     </div>
                     <div class="pb-4 text-center sm:text-left">
                         <div class="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
-                            <h1 class="text-3xl font-semibold text-white md:text-4xl"><?php echo htmlspecialchars($userDetails['username'], ENT_QUOTES, 'UTF-8'); ?></h1>
+                            <h1 class="text-3xl font-semibold text-white md:text-4xl"><?php echo htmlspecialchars($displayName !== '' ? $displayName : $handle, ENT_QUOTES, 'UTF-8'); ?></h1>
                             <span class="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white/80"><?php echo htmlspecialchars($userDetails['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
+                            <?php if ($handle !== ''): ?>
+                                <span class="text-sm text-white/60">@<?php echo htmlspecialchars($handle, ENT_QUOTES, 'UTF-8'); ?></span>
+                            <?php endif; ?>
                         </div>
                         <div class="mt-2 flex flex-wrap items-center justify-center gap-4 text-xs text-white/70 sm:justify-start">
                             <span><?php echo $number($followersCount); ?> follower</span>
@@ -127,6 +138,16 @@ $number = static function ($value): string {
             <div class="space-y-2">
                 <h2 class="text-lg font-semibold text-white">Profilo pubblico</h2>
                 <p class="text-sm text-white/60">Aggiorna bio, dettagli personali e il racconto del tuo tifo per far conoscere meglio chi sei.</p>
+            </div>
+            <div class="grid gap-5 sm:grid-cols-2">
+                <div class="space-y-2">
+                    <label for="profile_first_name" class="text-xs uppercase tracking-wide text-white/60">Nome</label>
+                    <input id="profile_first_name" type="text" name="first_name" maxlength="80" value="<?php echo htmlspecialchars($firstNameValue, ENT_QUOTES, 'UTF-8'); ?>" class="w-full rounded-2xl border border-white/15 bg-black/50 px-4 py-2.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" placeholder="Nome">
+                </div>
+                <div class="space-y-2">
+                    <label for="profile_last_name" class="text-xs uppercase tracking-wide text-white/60">Cognome</label>
+                    <input id="profile_last_name" type="text" name="last_name" maxlength="80" value="<?php echo htmlspecialchars($lastNameValue, ENT_QUOTES, 'UTF-8'); ?>" class="w-full rounded-2xl border border-white/15 bg-black/50 px-4 py-2.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" placeholder="Cognome">
+                </div>
             </div>
             <div class="grid gap-5">
                 <div class="space-y-2">

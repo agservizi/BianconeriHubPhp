@@ -62,10 +62,14 @@ ob_start();
                 <?php foreach ($results as $user):
                     $userId = (int) ($user['id'] ?? 0);
                     $username = $user['username'] ?? '';
+                    $displayName = trim((string) ($user['display_name'] ?? ''));
+                    if ($displayName === '') {
+                        $displayName = $username;
+                    }
                     $badge = $user['badge'] ?? 'Tifoso';
                     $avatarUrl = trim((string) ($user['avatar_url'] ?? ''));
                     $createdAt = (int) ($user['created_at'] ?? time());
-                    $joinedLabel = getHumanTimeDiff($createdAt) . ' fa';
+                    $joinedLabel = getHumanTimeDiff($createdAt);
                     $initials = strtoupper(substr($username !== '' ? $username : 'BH', 0, 2));
                     $viewerCanFollow = !empty($user['viewer_can_follow']);
                     $isFollowing = !empty($user['is_following']);
@@ -75,30 +79,47 @@ ob_start();
                     $buttonClasses = $isFollowing
                         ? 'inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-white hover:text-black'
                         : 'inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-all hover:bg-juventus-silver';
+                    $profileUrl = '';
+                    if ($username !== '') {
+                        $profileUrl = '?page=user_profile&username=' . urlencode($username);
+                    } elseif ($userId > 0) {
+                        $profileUrl = '?page=user_profile&id=' . $userId;
+                    }
                 ?>
                     <li class="rounded-3xl border border-white/10 bg-black/35 px-4 py-4">
                         <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                            <div class="flex items-center gap-3">
-                                <div class="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white">
-                                    <?php if ($avatarUrl !== ''): ?>
-                                        <img src="<?php echo htmlspecialchars($avatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($username, ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full rounded-full object-cover">
-                                    <?php else: ?>
-                                        <?php echo htmlspecialchars($initials, ENT_QUOTES, 'UTF-8'); ?>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="space-y-1">
-                                    <p class="text-base font-semibold text-white">
-                                        <?php echo htmlspecialchars($username, ENT_QUOTES, 'UTF-8'); ?>
-                                        <?php if ($isCurrentUser): ?>
-                                            <span class="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-300">Sei tu</span>
-                                        <?php elseif ($isFollowing): ?>
-                                            <span class="ml-2 rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-emerald-200">Seguito</span>
+                            <?php if ($profileUrl !== ''): ?>
+                                <a href="<?php echo htmlspecialchars($profileUrl, ENT_QUOTES, 'UTF-8'); ?>" class="group flex items-center gap-3 text-left text-white no-underline transition-colors hover:text-juventus-yellow">
+                            <?php else: ?>
+                                <div class="flex items-center gap-3">
+                            <?php endif; ?>
+                                    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white">
+                                        <?php if ($avatarUrl !== ''): ?>
+                                            <img src="<?php echo htmlspecialchars($avatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full rounded-full object-cover">
+                                        <?php else: ?>
+                                            <?php echo htmlspecialchars($initials, ENT_QUOTES, 'UTF-8'); ?>
                                         <?php endif; ?>
-                                    </p>
-                                    <p class="text-sm text-gray-300">Badge: <span class="font-semibold text-white"><?php echo htmlspecialchars($badge, ENT_QUOTES, 'UTF-8'); ?></span></p>
-                                    <p class="text-xs uppercase tracking-wide text-gray-500">Iscritto <?php echo htmlspecialchars($joinedLabel, ENT_QUOTES, 'UTF-8'); ?></p>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <p class="text-base font-semibold text-white <?php echo $profileUrl !== '' ? 'group-hover:text-juventus-yellow' : ''; ?>">
+                                            <?php echo htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8'); ?>
+                                            <?php if ($isCurrentUser): ?>
+                                                <span class="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-300">Sei tu</span>
+                                            <?php elseif ($isFollowing): ?>
+                                                <span class="ml-2 rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-emerald-200">Seguito</span>
+                                            <?php endif; ?>
+                                        </p>
+                                        <?php if ($username !== ''): ?>
+                                            <p class="text-sm text-gray-300">@<?php echo htmlspecialchars($username, ENT_QUOTES, 'UTF-8'); ?></p>
+                                        <?php endif; ?>
+                                        <p class="text-sm text-gray-300">Badge: <span class="font-semibold text-white"><?php echo htmlspecialchars($badge, ENT_QUOTES, 'UTF-8'); ?></span></p>
+                                        <p class="text-xs uppercase tracking-wide text-gray-500">Iscritto <?php echo htmlspecialchars($joinedLabel, ENT_QUOTES, 'UTF-8'); ?></p>
+                                    </div>
+                            <?php if ($profileUrl !== ''): ?>
+                                </a>
+                            <?php else: ?>
                                 </div>
-                            </div>
+                            <?php endif; ?>
                             <div class="flex items-center gap-2">
                                 <?php if ($isCurrentUser): ?>
                                     <span class="rounded-full border border-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Profilo attuale</span>

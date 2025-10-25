@@ -27,6 +27,29 @@ $eventsOrganizedRaw = (int)($communityStats['events_hosted'] ?? 0);
 $newMembersDisplay = ($newMembersRaw > 0 ? '+' : '') . number_format($newMembersRaw, 0, ',', '.');
 $dailyInteractionsDisplay = number_format($dailyInteractionsRaw, 0, ',', '.');
 $eventsOrganizedDisplay = number_format($eventsOrganizedRaw, 0, ',', '.');
+$navMentionSummary = [
+    'items' => [],
+    'unread_count' => 0,
+    'has_more' => false,
+    'limit' => 5,
+    'offset' => 0,
+    'timestamp' => time(),
+];
+if ($loggedUser) {
+    $navMentionSummary = getCommunityMentionsSummary((int) ($loggedUser['id'] ?? 0), 5);
+}
+$navMentionItems = is_array($navMentionSummary['items'] ?? null) ? $navMentionSummary['items'] : [];
+$navMentionUnread = (int) ($navMentionSummary['unread_count'] ?? 0);
+$navMentionHasMore = !empty($navMentionSummary['has_more']);
+$navMentionLimit = (int) ($navMentionSummary['limit'] ?? 5);
+if ($navMentionLimit <= 0) {
+    $navMentionLimit = 5;
+}
+$navMentionBadgeLabel = '';
+if ($navMentionUnread > 0) {
+    $navMentionBadgeLabel = $navMentionUnread > 99 ? '99+' : ($navMentionUnread > 9 ? '9+' : (string) $navMentionUnread);
+}
+$navMentionEmpty = empty($navMentionItems);
 $ctaHref = $loggedUser ? '?page=community' : '?page=register';
 $ctaLabel = $loggedUser ? 'Vai alla community' : 'Diventa socio';
 $isHomeRoute = isset($activeRoute) ? $activeRoute === 'home' : (($currentPage ?? 'home') === 'home');
@@ -46,6 +69,8 @@ $pageDescriptions = [
     'profile_search' => 'Cerca e segui altri tifosi per personalizzare il tuo feed e ricevere notifiche mirate.',
     'login' => 'Accedi alla tua area riservata per gestire profilo, badge e partecipare alle discussioni in diretta.',
     'register' => 'Iscriviti per ottenere badge esclusivi, contenuti extra e vivere l’esperienza BianconeriHub completa.',
+    'password_forgot' => 'Ricevi un link sicuro per reimpostare la tua password e tornare in curva in pochi minuti.',
+    'password_reset' => 'Imposta una nuova password e proteggi il tuo account prima del prossimo fischio d’inizio.',
 ];
 $introCopy = $pageDescriptions[$routeKey] ?? 'Vivi il fan club digitale dedicato alla Juventus con cronache, dibattiti e iniziative esclusive.';
 $profileSearchQuery = '';
@@ -63,6 +88,7 @@ if (($currentPage ?? '') === 'profile_search') {
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="uploads/favicon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -90,7 +116,7 @@ if (($currentPage ?? '') === 'profile_search') {
                 <div class="flex items-center justify-between gap-3">
                     <a href="?page=home" class="flex items-center">
                         <div class="space-y-1">
-                            <span class="text-lg font-semibold tracking-wide uppercase">BianconeriHub</span>
+                            <span class="text-lg font-semibold tracking-wide uppercase">BianconeriHub ⭐⭐⭐</span>
                             <span class="text-xs uppercase tracking-[0.3em] text-gray-400"><?php echo htmlspecialchars($siteTagline, ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                     </a>
@@ -99,6 +125,76 @@ if (($currentPage ?? '') === 'profile_search') {
                             <div class="text-right">
                                 <p class="text-sm font-semibold">Ciao, <?php echo htmlspecialchars($loggedUser['username'], ENT_QUOTES, 'UTF-8'); ?></p>
                                 <p class="text-xs uppercase tracking-wide text-gray-400"><?php echo htmlspecialchars($loggedUser['badge'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8'); ?></p>
+                            </div>
+                            <div class="relative" data-nav-mentions>
+                                <button
+                                    type="button"
+                                    class="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-semibold text-white transition-all hover:border-white/40 hover:bg-white/10"
+                                    data-nav-mentions-toggle
+                                    data-nav-mentions-endpoint="scripts/community_mentions.php"
+                                    data-nav-mentions-limit="<?php echo (int) $navMentionLimit; ?>"
+                                    data-nav-mentions-token="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>"
+                                    aria-haspopup="true"
+                                    aria-expanded="false"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M14.857 17.657a2.999 2.999 0 0 1-5.714 0M12 3a4.5 4.5 0 0 1 4.5 4.5v1.086a8.96 8.96 0 0 0 1.5 5.114l.45.674a.75.75 0 0 1-.63 1.176H6.18a.75.75 0 0 1-.63-1.176l.45-.674a8.96 8.96 0 0 0 1.5-5.114V7.5A4.5 4.5 0 0 1 12 3z" />
+                                    </svg>
+                                    <span>Menzioni</span>
+                                    <span
+                                        class="inline-flex min-h-[1.25rem] min-w-[1.25rem] items-center justify-center rounded-full bg-emerald-400 px-2 text-xs font-bold uppercase tracking-wide text-black shadow <?php echo $navMentionUnread > 0 ? '' : 'hidden'; ?>"
+                                        data-nav-mentions-count
+                                        data-nav-mentions-count-value="<?php echo $navMentionUnread; ?>"
+                                    >
+                                        <?php echo htmlspecialchars($navMentionBadgeLabel, ENT_QUOTES, 'UTF-8'); ?>
+                                    </span>
+                                </button>
+                                <div class="absolute right-0 top-full z-50 mt-3 hidden w-80 max-w-xs rounded-2xl border border-white/15 bg-black/95 p-4 text-sm text-white shadow-2xl" data-nav-mentions-panel>
+                                    <div class="flex items-center justify-between gap-2">
+                                        <span class="text-xs font-semibold uppercase tracking-wide text-gray-300">Ultime menzioni</span>
+                                    </div>
+                                    <div class="mt-3 space-y-3" data-nav-mentions-content>
+                                        <p class="text-sm text-gray-300 <?php echo $navMentionEmpty ? '' : 'hidden'; ?>" data-nav-mentions-empty>Nessuna menzione dalla community al momento.</p>
+                                        <p class="hidden text-sm text-rose-200" data-nav-mentions-error></p>
+                                        <p class="hidden text-sm text-gray-300" data-nav-mentions-loading>Caricamento…</p>
+                                        <ul class="space-y-2 <?php echo $navMentionEmpty ? 'hidden' : ''; ?>" data-nav-mentions-list>
+                                            <?php foreach ($navMentionItems as $mention) {
+                                                $mentionAvatar = trim((string) ($mention['author_avatar_url'] ?? ''));
+                                                $mentionName = trim((string) ($mention['author_display_name'] ?? ''));
+                                                $mentionHandle = trim((string) ($mention['author_username'] ?? ''));
+                                                $mentionInitialsSource = $mentionName !== '' ? $mentionName : ($mentionHandle !== '' ? $mentionHandle : 'BH');
+                                                $mentionInitials = strtoupper(substr($mentionInitialsSource, 0, 2));
+                                                $mentionIsUnread = !empty($mention['is_unread']);
+                                                $mentionClasses = $mentionIsUnread ? 'border-white/40 bg-white/10' : 'border-white/10 bg-black/40';
+                                            ?>
+                                                <li>
+                                                    <a href="<?php echo htmlspecialchars($mention['permalink'] ?? '?page=community', ENT_QUOTES, 'UTF-8'); ?>" class="flex items-start gap-3 rounded-xl border <?php echo $mentionClasses; ?> px-3 py-2 transition-all hover:border-white/50 hover:bg-white/15" data-nav-mentions-item>
+                                                        <span class="flex h-9 w-9 overflow-hidden rounded-full border border-white/15 bg-white/10 text-xs font-semibold text-white">
+                                                            <?php if ($mentionAvatar !== ''): ?>
+                                                                <img src="<?php echo htmlspecialchars($mentionAvatar, ENT_QUOTES, 'UTF-8'); ?>" alt="" class="h-full w-full object-cover">
+                                                            <?php else: ?>
+                                                                <span class="flex h-full w-full items-center justify-center"><?php echo htmlspecialchars($mentionInitials, ENT_QUOTES, 'UTF-8'); ?></span>
+                                                            <?php endif; ?>
+                                                        </span>
+                                                        <span class="flex-1 space-y-1">
+                                                            <span class="flex items-center justify-between gap-2">
+                                                                <span class="text-sm font-semibold text-white"><?php echo htmlspecialchars($mentionName !== '' ? $mentionName : ($mentionHandle !== '' ? $mentionHandle : 'Tifoso'), ENT_QUOTES, 'UTF-8'); ?></span>
+                                                                <span class="text-[0.65rem] uppercase tracking-wide text-gray-400"><?php echo htmlspecialchars($mention['created_human'] ?? '', ENT_QUOTES, 'UTF-8'); ?></span>
+                                                            </span>
+                                                            <?php if ($mentionHandle !== ''): ?>
+                                                                <span class="text-[0.65rem] uppercase tracking-wide text-gray-500">@<?php echo htmlspecialchars($mentionHandle, ENT_QUOTES, 'UTF-8'); ?></span>
+                                                            <?php endif; ?>
+                                                            <span class="block text-xs text-gray-300 leading-snug"><?php echo htmlspecialchars($mention['excerpt'] ?? '', ENT_QUOTES, 'UTF-8'); ?></span>
+                                                        </span>
+                                                    </a>
+                                                </li>
+                                            <?php } ?>
+                                        </ul>
+                                        <div class="<?php echo $navMentionHasMore ? 'block' : 'hidden'; ?> border-t border-white/10 pt-2 text-center text-xs text-gray-400" data-nav-mentions-more>
+                                            <a href="?page=community" class="font-semibold text-white hover:underline">Apri la community</a>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <a href="?action=logout" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-white hover:text-black">
                                 Logout
@@ -114,16 +210,88 @@ if (($currentPage ?? '') === 'profile_search') {
                                 </svg>
                             </a>
                         <?php endif; ?>
-                        <a href="<?php echo $ctaHref; ?>" class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-all hover:bg-juventus-silver">
-                            <?php echo htmlspecialchars($ctaLabel, ENT_QUOTES, 'UTF-8'); ?>
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5 15.75 12 8.25 19.5" />
-                            </svg>
-                        </a>
+                        <div class="flex items-center">
+                            <a href="<?php echo $ctaHref; ?>" class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-all hover:bg-juventus-silver">
+                                <?php echo htmlspecialchars($ctaLabel, ENT_QUOTES, 'UTF-8'); ?>
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5 15.75 12 8.25 19.5" />
+                                </svg>
+                            </a>
+                        </div>
                     </div>
                     <div class="flex items-center gap-2 md:hidden">
                         <?php if ($loggedUser): ?>
                             <span class="text-xs font-semibold uppercase tracking-wide text-white/70"><?php echo htmlspecialchars($loggedUser['badge'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8'); ?></span>
+                            <div class="relative md:hidden" data-nav-mentions>
+                                <button
+                                    type="button"
+                                    class="relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/30 text-white transition-all hover:border-white/60 hover:bg-white/10"
+                                    data-nav-mentions-toggle
+                                    data-nav-mentions-endpoint="scripts/community_mentions.php"
+                                    data-nav-mentions-limit="<?php echo (int) $navMentionLimit; ?>"
+                                    data-nav-mentions-token="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>"
+                                    aria-expanded="false"
+                                    aria-haspopup="true"
+                                    aria-label="Menzioni della community"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M14.857 17.657a2.999 2.999 0 0 1-5.714 0M12 3a4.5 4.5 0 0 1 4.5 4.5v1.086a8.96 8.96 0 0 0 1.5 5.114l.45.674a.75.75 0 0 1-.63 1.176H6.18a.75.75 0 0 1-.63-1.176l.45-.674a8.96 8.96 0 0 0 1.5-5.114V7.5A4.5 4.5 0 0 1 12 3z" />
+                                    </svg>
+                                    <span
+                                        class="absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-emerald-400 px-1 text-[0.6rem] font-bold uppercase tracking-wide text-black shadow <?php echo $navMentionUnread > 0 ? '' : 'hidden'; ?>"
+                                        data-nav-mentions-count
+                                        data-nav-mentions-count-value="<?php echo $navMentionUnread; ?>"
+                                    >
+                                        <?php echo htmlspecialchars($navMentionBadgeLabel, ENT_QUOTES, 'UTF-8'); ?>
+                                    </span>
+                                </button>
+                                <div class="absolute right-0 top-full z-50 mt-3 hidden w-72 max-w-xs rounded-2xl border border-white/15 bg-black/95 p-4 text-sm text-white shadow-2xl" data-nav-mentions-panel>
+                                    <div class="flex items-center justify-between gap-2">
+                                        <span class="text-xs font-semibold uppercase tracking-wide text-gray-300">Ultime menzioni</span>
+                                    </div>
+                                    <div class="mt-3 space-y-3" data-nav-mentions-content>
+                                        <p class="text-sm text-gray-300 <?php echo $navMentionEmpty ? '' : 'hidden'; ?>" data-nav-mentions-empty>Nessuna menzione dalla community al momento.</p>
+                                        <p class="hidden text-sm text-rose-200" data-nav-mentions-error></p>
+                                        <p class="hidden text-sm text-gray-300" data-nav-mentions-loading>Caricamento…</p>
+                                        <ul class="space-y-2 <?php echo $navMentionEmpty ? 'hidden' : ''; ?>" data-nav-mentions-list>
+                                            <?php foreach ($navMentionItems as $mention) {
+                                                $mentionAvatar = trim((string) ($mention['author_avatar_url'] ?? ''));
+                                                $mentionName = trim((string) ($mention['author_display_name'] ?? ''));
+                                                $mentionHandle = trim((string) ($mention['author_username'] ?? ''));
+                                                $mentionInitialsSource = $mentionName !== '' ? $mentionName : ($mentionHandle !== '' ? $mentionHandle : 'BH');
+                                                $mentionInitials = strtoupper(substr($mentionInitialsSource, 0, 2));
+                                                $mentionIsUnread = !empty($mention['is_unread']);
+                                                $mentionClasses = $mentionIsUnread ? 'border-white/40 bg-white/10' : 'border-white/10 bg-black/40';
+                                            ?>
+                                                <li>
+                                                    <a href="<?php echo htmlspecialchars($mention['permalink'] ?? '?page=community', ENT_QUOTES, 'UTF-8'); ?>" class="flex items-start gap-3 rounded-xl border <?php echo $mentionClasses; ?> px-3 py-2 transition-all hover:border-white/50 hover:bg-white/15" data-nav-mentions-item>
+                                                        <span class="flex h-9 w-9 overflow-hidden rounded-full border border-white/15 bg-white/10 text-xs font-semibold text-white">
+                                                            <?php if ($mentionAvatar !== ''): ?>
+                                                                <img src="<?php echo htmlspecialchars($mentionAvatar, ENT_QUOTES, 'UTF-8'); ?>" alt="" class="h-full w-full object-cover">
+                                                            <?php else: ?>
+                                                                <span class="flex h-full w-full items-center justify-center"><?php echo htmlspecialchars($mentionInitials, ENT_QUOTES, 'UTF-8'); ?></span>
+                                                            <?php endif; ?>
+                                                        </span>
+                                                        <span class="flex-1 space-y-1">
+                                                            <span class="flex items-center justify-between gap-2">
+                                                                <span class="text-sm font-semibold text-white"><?php echo htmlspecialchars($mentionName !== '' ? $mentionName : ($mentionHandle !== '' ? $mentionHandle : 'Tifoso'), ENT_QUOTES, 'UTF-8'); ?></span>
+                                                                <span class="text-[0.65rem] uppercase tracking-wide text-gray-400"><?php echo htmlspecialchars($mention['created_human'] ?? '', ENT_QUOTES, 'UTF-8'); ?></span>
+                                                            </span>
+                                                            <?php if ($mentionHandle !== ''): ?>
+                                                                <span class="text-[0.65rem] uppercase tracking-wide text-gray-500">@<?php echo htmlspecialchars($mentionHandle, ENT_QUOTES, 'UTF-8'); ?></span>
+                                                            <?php endif; ?>
+                                                            <span class="block text-xs text-gray-300 leading-snug"><?php echo htmlspecialchars($mention['excerpt'] ?? '', ENT_QUOTES, 'UTF-8'); ?></span>
+                                                        </span>
+                                                    </a>
+                                                </li>
+                                            <?php } ?>
+                                        </ul>
+                                        <div class="<?php echo $navMentionHasMore ? 'block' : 'hidden'; ?> border-t border-white/10 pt-2 text-center text-xs text-gray-400" data-nav-mentions-more>
+                                            <a href="?page=community" class="font-semibold text-white hover:underline">Apri la community</a>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         <?php endif; ?>
                         <button type="button" class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/30 text-white transition-all hover:border-white/60 hover:bg-white/10" data-mobile-nav-toggle aria-expanded="false">
                             <span class="sr-only">Apri menu di navigazione</span>
@@ -138,7 +306,7 @@ if (($currentPage ?? '') === 'profile_search') {
                 </div>
                 <div class="hidden md:block">
                     <nav class="w-full md:w-auto">
-                        <ul class="flex flex-wrap items-center gap-3 text-sm font-medium">
+                        <ul class="flex flex-wrap items-center gap-3 text-sm font-medium md:flex-nowrap md:gap-4">
                             <?php foreach ($topNavItems as $pageKey => $item) {
                                 $linkLabel = $item['label'];
                                 $linkHref = '?page=' . $pageKey;
@@ -167,11 +335,11 @@ if (($currentPage ?? '') === 'profile_search') {
                                     </a>
                                 </li>
                                 <?php if ($pageKey === 'profile'): ?>
-                                    <li class="relative" data-nav-profile-search-container data-nav-profile-search-min-length="2">
+                                    <li class="relative flex-shrink-0" data-nav-profile-search-container data-nav-profile-search-min-length="2">
                                         <form
                                             action="?page=profile_search"
                                             method="get"
-                                            class="flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-sm text-white transition-all focus-within:border-white/60"
+                                            class="flex w-60 items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-sm text-white transition-all focus-within:border-white/60 md:w-72"
                                             data-nav-profile-search-form
                                         >
                                             <input type="hidden" name="page" value="profile_search">
@@ -184,7 +352,7 @@ if (($currentPage ?? '') === 'profile_search') {
                                                 type="search"
                                                 name="q"
                                                 value="<?php echo htmlspecialchars($profileSearchQuery, ENT_QUOTES, 'UTF-8'); ?>"
-                                                class="w-40 bg-transparent text-sm text-white placeholder:text-gray-500 focus:outline-none md:w-48"
+                                                class="flex-1 bg-transparent text-sm text-white placeholder:text-gray-500 focus:outline-none"
                                                 placeholder="Cerca tifoso"
                                                 autocomplete="off"
                                                 data-nav-profile-search-input

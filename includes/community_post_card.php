@@ -32,6 +32,16 @@ $viewerHasVotedPoll = !empty($post['viewer_has_voted_poll']);
 $storyTitle = trim((string) ($post['story_title'] ?? ''));
 $storyCaption = trim((string) ($post['story_caption'] ?? ''));
 $storyCredit = trim((string) ($post['story_credit'] ?? ''));
+$sharedNewsData = isset($post['shared_news']) && is_array($post['shared_news']) ? $post['shared_news'] : null;
+$sharedNewsId = $sharedNewsData && isset($sharedNewsData['id']) ? (int) $sharedNewsData['id'] : (int) ($post['shared_news_id'] ?? 0);
+$sharedNewsTitle = trim((string) ($sharedNewsData['title'] ?? ($post['shared_news_title'] ?? '')));
+$sharedNewsSlug = trim((string) ($sharedNewsData['slug'] ?? ($post['shared_news_slug'] ?? '')));
+$sharedNewsExcerpt = trim((string) ($sharedNewsData['excerpt'] ?? ($post['shared_news_excerpt'] ?? '')));
+$sharedNewsTag = trim((string) ($sharedNewsData['tag'] ?? ($post['shared_news_tag'] ?? '')));
+$sharedNewsImage = trim((string) ($sharedNewsData['image'] ?? ($post['shared_news_image'] ?? '')));
+$sharedNewsSourceUrl = trim((string) ($sharedNewsData['source_url'] ?? ($post['shared_news_source_url'] ?? '')));
+$sharedNewsPublishedRaw = $sharedNewsData['published_at'] ?? ($post['shared_news_published_at'] ?? null);
+$sharedNewsPublishedAt = $sharedNewsPublishedRaw ? normalizeToTimestamp($sharedNewsPublishedRaw) : null;
 $parentPrefillId = isset($oldCommentParentId) ? (int) $oldCommentParentId : 0;
 $commentPrefill = ($oldCommentPostId === $postId && $parentPrefillId === 0) ? $oldCommentBody : '';
 $replyPrefillId = ($oldCommentPostId === $postId && $parentPrefillId > 0) ? $parentPrefillId : 0;
@@ -39,10 +49,24 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
 $communityEmojiOptions = getCommunityEmojiOptions();
 $authorAvatarUrl = trim((string) ($post['author_avatar_url'] ?? ''));
 $authorCoverPath = trim((string) ($post['author_cover_path'] ?? ''));
-$authorInitials = strtoupper(substr($post['author'] ?? 'BH', 0, 2));
+$authorDisplayNameRaw = trim((string) ($post['author_display_name'] ?? $post['author'] ?? ''));
+$authorHandleRaw = trim((string) ($post['author_username'] ?? $post['author'] ?? ''));
+if ($authorDisplayNameRaw === '' && $authorHandleRaw === '') {
+    $authorDisplayNameRaw = 'Tifoso';
+}
+$authorInitialsSource = $authorDisplayNameRaw !== '' ? $authorDisplayNameRaw : ($authorHandleRaw !== '' ? $authorHandleRaw : 'BH');
+$authorInitials = strtoupper(substr($authorInitialsSource, 0, 2));
 $headerTextClass = $authorCoverPath !== '' ? 'text-gray-200' : 'text-gray-500';
 $headerMetaClass = $authorCoverPath !== '' ? 'text-gray-200' : 'text-gray-500';
-$authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
+$authorDisplayName = $authorDisplayNameRaw !== '' ? $authorDisplayNameRaw : ($authorHandleRaw !== '' ? $authorHandleRaw : 'Tifoso');
+$authorName = htmlspecialchars($authorDisplayName, ENT_QUOTES, 'UTF-8');
+$authorHandle = $authorHandleRaw !== '' ? '@' . htmlspecialchars($authorHandleRaw, ENT_QUOTES, 'UTF-8') : '';
+$profileUrl = '';
+if ($authorHandleRaw !== '') {
+    $profileUrl = '?page=user_profile&username=' . urlencode($authorHandleRaw);
+} elseif ($authorId > 0) {
+    $profileUrl = '?page=user_profile&id=' . $authorId;
+}
 ?>
 <article id="post-<?php echo $postId; ?>" class="fan-card px-5 py-6 space-y-4" data-community-post>
     <?php if ($authorCoverPath !== ''): ?>
@@ -50,7 +74,11 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
             <img src="<?php echo htmlspecialchars($authorCoverPath, ENT_QUOTES, 'UTF-8'); ?>" alt="Cover di <?php echo $authorName; ?>" class="absolute inset-0 h-full w-full object-cover">
             <div class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/60 to-black/80"></div>
             <div class="relative flex flex-col gap-2 px-4 py-4 text-xs uppercase tracking-wide <?php echo $headerTextClass; ?> sm:flex-row sm:items-center sm:justify-between">
-                <div class="flex items-center gap-2">
+                <?php if ($profileUrl !== ''): ?>
+                    <a href="<?php echo htmlspecialchars($profileUrl, ENT_QUOTES, 'UTF-8'); ?>" class="group flex items-center gap-2 text-left text-inherit no-underline transition-colors hover:text-juventus-yellow">
+                <?php else: ?>
+                    <div class="flex items-center gap-2">
+                <?php endif; ?>
                     <div class="flex h-9 w-9 overflow-hidden rounded-full border border-white/20 bg-white/10 text-xs font-semibold text-white">
                         <?php if ($authorAvatarUrl !== ''): ?>
                             <img src="<?php echo htmlspecialchars($authorAvatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo $authorName; ?>" class="h-full w-full object-cover">
@@ -59,7 +87,10 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
                         <?php endif; ?>
                     </div>
                     <div>
-                        <p class="text-sm font-semibold text-white"><?php echo $authorName; ?></p>
+                        <p class="text-sm font-semibold text-white <?php echo $profileUrl !== '' ? 'group-hover:text-juventus-yellow' : ''; ?>"><?php echo $authorName; ?></p>
+                        <?php if ($authorHandle !== ''): ?>
+                            <span class="text-xs text-gray-300"><?php echo $authorHandle; ?></span>
+                        <?php endif; ?>
                         <?php if (!empty($post['badge'])): ?>
                             <span class="text-xs text-gray-200"><?php echo htmlspecialchars($post['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
                         <?php endif; ?>
@@ -69,11 +100,17 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
                             <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Gallery</span>
                         <?php elseif ($contentType === 'story'): ?>
                             <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Storia</span>
+                        <?php elseif ($contentType === 'news'): ?>
+                            <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">News</span>
                         <?php elseif ($contentType === 'poll'): ?>
                             <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Sondaggio</span>
                         <?php endif; ?>
                     </div>
-                </div>
+                <?php if ($profileUrl !== ''): ?>
+                    </a>
+                <?php else: ?>
+                    </div>
+                <?php endif; ?>
                 <div class="flex items-center justify-end gap-3 sm:justify-end">
                     <?php if ($viewerCanFollow): ?>
                         <form method="post" class="inline">
@@ -93,7 +130,11 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
         </div>
     <?php else: ?>
         <div class="flex flex-col gap-2 text-xs uppercase tracking-wide <?php echo $headerTextClass; ?> sm:flex-row sm:items-center sm:justify-between">
-            <div class="flex items-center gap-2">
+            <?php if ($profileUrl !== ''): ?>
+                <a href="<?php echo htmlspecialchars($profileUrl, ENT_QUOTES, 'UTF-8'); ?>" class="group flex items-center gap-2 text-left text-inherit no-underline transition-colors hover:text-juventus-yellow">
+            <?php else: ?>
+                <div class="flex items-center gap-2">
+            <?php endif; ?>
                 <div class="flex h-9 w-9 overflow-hidden rounded-full border border-white/20 bg-white/10 text-xs font-semibold text-white">
                     <?php if ($authorAvatarUrl !== ''): ?>
                         <img src="<?php echo htmlspecialchars($authorAvatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo $authorName; ?>" class="h-full w-full object-cover">
@@ -102,7 +143,10 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
                     <?php endif; ?>
                 </div>
                 <div>
-                    <p class="text-sm font-semibold text-white"><?php echo $authorName; ?></p>
+                    <p class="text-sm font-semibold text-white <?php echo $profileUrl !== '' ? 'group-hover:text-juventus-yellow' : ''; ?>"><?php echo $authorName; ?></p>
+                    <?php if ($authorHandle !== ''): ?>
+                        <span class="text-xs text-gray-400"><?php echo $authorHandle; ?></span>
+                    <?php endif; ?>
                     <?php if (!empty($post['badge'])): ?>
                         <span class="text-xs text-gray-400"><?php echo htmlspecialchars($post['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
                     <?php endif; ?>
@@ -112,11 +156,17 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
                         <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Gallery</span>
                     <?php elseif ($contentType === 'story'): ?>
                         <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Storia</span>
+                    <?php elseif ($contentType === 'news'): ?>
+                        <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">News</span>
                     <?php elseif ($contentType === 'poll'): ?>
                         <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Sondaggio</span>
                     <?php endif; ?>
                 </div>
-            </div>
+            <?php if ($profileUrl !== ''): ?>
+                </a>
+            <?php else: ?>
+                </div>
+            <?php endif; ?>
             <div class="flex items-center justify-end gap-3 sm:justify-end">
                 <?php if ($viewerCanFollow): ?>
                     <form method="post" class="inline">
@@ -160,6 +210,54 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
     <?php elseif (in_array($contentType, ['photo', 'story'], true) && $mediaUrl !== ''): ?>
         <div class="overflow-hidden rounded-2xl border border-white/10">
             <img src="<?php echo htmlspecialchars($mediaUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Contenuto condiviso da <?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?>" class="h-64 w-full object-cover">
+        </div>
+    <?php endif; ?>
+
+    <?php if ($contentType === 'news' && $sharedNewsId > 0 && $sharedNewsTitle !== ''): ?>
+        <div class="overflow-hidden rounded-2xl border border-white/10 bg-black/40" data-community-post-news-card>
+            <?php if ($sharedNewsImage !== ''): ?>
+                <div class="relative h-44 w-full overflow-hidden border-b border-white/10">
+                    <img src="<?php echo htmlspecialchars($sharedNewsImage, ENT_QUOTES, 'UTF-8'); ?>" alt="Anteprima news" class="h-full w-full object-cover">
+                    <?php if ($sharedNewsTag !== ''): ?>
+                        <span class="absolute left-3 top-3 inline-flex rounded-full bg-black/70 px-2 py-1 text-[0.6rem] font-semibold uppercase tracking-wide text-white">#<?php echo htmlspecialchars($sharedNewsTag, ENT_QUOTES, 'UTF-8'); ?></span>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+            <div class="space-y-3 p-4">
+                <?php if ($sharedNewsTag !== '' && $sharedNewsImage === ''): ?>
+                    <span class="inline-flex rounded-full bg-white/10 px-2 py-1 text-[0.6rem] font-semibold uppercase tracking-wide text-white/80">#<?php echo htmlspecialchars($sharedNewsTag, ENT_QUOTES, 'UTF-8'); ?></span>
+                <?php endif; ?>
+                <p class="text-base font-semibold text-white leading-snug"><?php echo htmlspecialchars($sharedNewsTitle, ENT_QUOTES, 'UTF-8'); ?></p>
+                <?php if ($sharedNewsExcerpt !== ''): ?>
+                    <p class="text-sm text-gray-300 leading-relaxed"><?php echo nl2br(htmlspecialchars($sharedNewsExcerpt, ENT_QUOTES, 'UTF-8')); ?></p>
+                <?php endif; ?>
+                <div class="flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-wide text-gray-500">
+                    <div class="flex items-center gap-2">
+                        <span>News collegata</span>
+                        <?php if ($sharedNewsPublishedAt !== null): ?>
+                            <span>· <?php echo htmlspecialchars(getHumanTimeDiff($sharedNewsPublishedAt), ENT_QUOTES, 'UTF-8'); ?></span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 text-xs">
+                        <?php
+                        $newsArticleUrl = $sharedNewsSlug !== ''
+                            ? '?page=news_article&slug=' . urlencode($sharedNewsSlug)
+                            : '';
+                        $primaryUrl = $newsArticleUrl !== '' ? $newsArticleUrl : ($sharedNewsSourceUrl !== '' ? $sharedNewsSourceUrl : '');
+                        ?>
+                        <?php if ($primaryUrl !== ''): ?>
+                            <a href="<?php echo htmlspecialchars($primaryUrl, ENT_QUOTES, 'UTF-8'); ?>" class="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-[0.65rem] font-semibold text-black transition-all hover:bg-juventus-silver"<?php echo $newsArticleUrl === '' ? ' target="_blank" rel="noopener"' : ''; ?>>
+                                Leggi l’articolo
+                            </a>
+                        <?php endif; ?>
+                        <?php if ($sharedNewsSourceUrl !== '' && $newsArticleUrl !== '' && strcasecmp($sharedNewsSourceUrl, $primaryUrl) !== 0): ?>
+                            <a href="<?php echo htmlspecialchars($sharedNewsSourceUrl, ENT_QUOTES, 'UTF-8'); ?>" class="inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1.5 text-[0.65rem] font-semibold text-white transition-all hover:border-white/40" target="_blank" rel="noopener">
+                                Fonte originale
+                            </a>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
         </div>
     <?php endif; ?>
 
@@ -276,6 +374,10 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
         }
 
         $author = htmlspecialchars($comment['author'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8');
+        $authorHandle = '';
+        if (!empty($comment['author_username'])) {
+            $authorHandle = '@' . htmlspecialchars($comment['author_username'], ENT_QUOTES, 'UTF-8');
+        }
         $badge = trim((string) ($comment['badge'] ?? ''));
         $badgeHtml = $badge !== ''
             ? '<span class="text-[0.6rem] uppercase tracking-wide text-gray-500">' . htmlspecialchars($badge, ENT_QUOTES, 'UTF-8') . '</span>'
@@ -297,6 +399,9 @@ $authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
             <div class="flex items-center justify-between text-[0.65rem] uppercase tracking-wide text-gray-500">
                 <div class="flex flex-col">
                     <span class="font-semibold text-white"><?php echo $author; ?></span>
+                    <?php if ($authorHandle !== ''): ?>
+                        <span><?php echo $authorHandle; ?></span>
+                    <?php endif; ?>
                     <?php if ($badgeHtml !== ''): ?>
                         <?php echo $badgeHtml; ?>
                     <?php endif; ?>

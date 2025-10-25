@@ -29,6 +29,9 @@ $oldUsername = getOldInput('username');
                 <label for="password" class="text-sm font-medium">Password</label>
                 <input id="password" name="password" type="password" placeholder="Password" class="w-full bg-black/70 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" required>
             </div>
+            <div class="text-right text-xs">
+                <a href="?page=password_forgot" class="text-gray-400 hover:text-white transition-colors">Password dimenticata?</a>
+            </div>
             <button type="submit" class="w-full py-3 rounded-full bg-white text-black font-semibold transition-all duration-300 hover:bg-juventus-silver">Entra</button>
             <p class="text-sm text-center text-gray-400">
                 Non hai un account?

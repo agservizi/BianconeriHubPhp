@@ -60,11 +60,13 @@ try {
                 author_id INT UNSIGNED NOT NULL,
                 mentioned_user_id INT UNSIGNED NOT NULL,
                 notified_at DATETIME DEFAULT NULL,
+                viewed_at DATETIME DEFAULT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (id),
                 UNIQUE KEY community_post_mentions_post_user_unique (post_id, mentioned_user_id),
                 KEY community_post_mentions_post_id_foreign (post_id),
                 KEY community_post_mentions_mentioned_user_id_foreign (mentioned_user_id),
+                KEY community_post_mentions_viewed_index (viewed_at),
                 CONSTRAINT community_post_mentions_post_id_foreign FOREIGN KEY (post_id) REFERENCES community_posts(id) ON DELETE CASCADE ON UPDATE CASCADE,
                 CONSTRAINT community_post_mentions_author_id_foreign FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE,
                 CONSTRAINT community_post_mentions_mentioned_user_id_foreign FOREIGN KEY (mentioned_user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
@@ -72,13 +74,14 @@ try {
         );
         fwrite(STDOUT, "Created community_post_mentions table.\n");
     } else {
-        $columns = ['id', 'post_id', 'author_id', 'mentioned_user_id', 'notified_at', 'created_at'];
+        $columns = ['id', 'post_id', 'author_id', 'mentioned_user_id', 'notified_at', 'viewed_at', 'created_at'];
         foreach ($columns as $column) {
             if (!bhColumnExists($pdo, $table, $column)) {
                 $definition = match ($column) {
                     'id' => 'ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY',
                     'post_id', 'author_id', 'mentioned_user_id' => 'ADD COLUMN ' . $column . ' INT UNSIGNED NOT NULL',
                     'notified_at' => 'ADD COLUMN notified_at DATETIME DEFAULT NULL',
+                    'viewed_at' => 'ADD COLUMN viewed_at DATETIME DEFAULT NULL',
                     'created_at' => 'ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP',
                     default => null,
                 };
@@ -103,6 +106,11 @@ try {
         if (!bhIndexExists($pdo, $table, 'community_post_mentions_mentioned_user_id_foreign')) {
             $pdo->exec('ALTER TABLE ' . $table . ' ADD KEY community_post_mentions_mentioned_user_id_foreign (mentioned_user_id)');
             fwrite(STDOUT, "Added index community_post_mentions_mentioned_user_id_foreign.\n");
+        }
+
+        if (!bhIndexExists($pdo, $table, 'community_post_mentions_viewed_index')) {
+            $pdo->exec('ALTER TABLE ' . $table . ' ADD KEY community_post_mentions_viewed_index (viewed_at)');
+            fwrite(STDOUT, "Added index community_post_mentions_viewed_index.\n");
         }
 
         if (!bhForeignKeyExists($pdo, $table, 'community_post_mentions_post_id_foreign')) {

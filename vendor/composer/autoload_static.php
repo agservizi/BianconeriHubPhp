@@ -10,12 +10,17 @@ class ComposerStaticInit1bae9e80265f85709f7235955fd3024a
         '7b11c4dc42b3b3023073cb14e519683c' => __DIR__ . '/..' . '/ralouphie/getallheaders/src/getallheaders.php',
         '6e3fae29631ef280660b3cdad06f25a8' => __DIR__ . '/..' . '/symfony/deprecation-contracts/function.php',
         '37a3dc5111fe8f707ab4c132ef1dbc62' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/functions_include.php',
+        '0754989a10baadda533479884b399278' => __DIR__ . '/..' . '/resend/resend-php/src/Resend.php',
     );
 
     public static $prefixLengthsPsr4 = array (
         'S' => 
         array (
             'SpomkyLabs\\Pki\\' => 15,
+        ),
+        'R' => 
+        array (
+            'Resend\\' => 7,
         ),
         'P' => 
         array (
@@ -48,6 +53,10 @@ class ComposerStaticInit1bae9e80265f85709f7235955fd3024a
         'SpomkyLabs\\Pki\\' => 
         array (
             0 => __DIR__ . '/..' . '/spomky-labs/pki-framework/src',
+        ),
+        'Resend\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/resend/resend-php/src',
         ),
         'Psr\\Http\\Message\\' => 
         array (

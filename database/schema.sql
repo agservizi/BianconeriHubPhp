@@ -24,6 +24,7 @@ DROP TABLE IF EXISTS `community_post_reactions`;
 DROP TABLE IF EXISTS `community_posts`;
 DROP TABLE IF EXISTS `matches`;
 DROP TABLE IF EXISTS `news`;
+DROP TABLE IF EXISTS `password_resets`;
 DROP TABLE IF EXISTS `users`;
 
 SET FOREIGN_KEY_CHECKS = 1;
@@ -38,12 +39,33 @@ CREATE TABLE `users` (
     `email` VARCHAR(255) NOT NULL,
     `password_hash` VARCHAR(255) NOT NULL,
     `badge` VARCHAR(60) DEFAULT 'Tifoso',
+    `first_name` VARCHAR(80) DEFAULT NULL,
+    `last_name` VARCHAR(80) DEFAULT NULL,
     `avatar_url` VARCHAR(255) DEFAULT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `users_username_unique` (`username`),
     UNIQUE KEY `users_email_unique` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Table: password_resets
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `password_resets`;
+CREATE TABLE `password_resets` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `user_id` INT UNSIGNED NOT NULL,
+    `token_hash` CHAR(64) NOT NULL,
+    `expires_at` DATETIME NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `password_resets_token_hash_unique` (`token_hash`),
+    KEY `password_resets_user_id_foreign` (`user_id`),
+    KEY `password_resets_expires_at_index` (`expires_at`),
+    CONSTRAINT `password_resets_user_id_foreign`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
@@ -117,9 +139,15 @@ CREATE TABLE `matches` (
     `source` VARCHAR(40) DEFAULT NULL,
     `competition` VARCHAR(80) NOT NULL,
     `opponent` VARCHAR(120) NOT NULL,
+    `home_team` VARCHAR(120) DEFAULT NULL,
+    `away_team` VARCHAR(120) DEFAULT NULL,
+    `juventus_is_home` TINYINT(1) DEFAULT NULL,
     `venue` VARCHAR(120) DEFAULT NULL,
     `kickoff_at` DATETIME NOT NULL,
     `status` VARCHAR(80) DEFAULT NULL,
+    `status_code` VARCHAR(40) DEFAULT NULL,
+    `home_score` TINYINT UNSIGNED DEFAULT NULL,
+    `away_score` TINYINT UNSIGNED DEFAULT NULL,
     `broadcast` VARCHAR(120) DEFAULT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
@@ -136,13 +164,21 @@ CREATE TABLE `community_posts` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `user_id` INT UNSIGNED NOT NULL,
     `content` TEXT NOT NULL,
-    `content_type` ENUM('text', 'photo', 'gallery', 'poll', 'story') NOT NULL DEFAULT 'text',
+    `content_type` ENUM('text', 'photo', 'gallery', 'poll', 'story', 'news') NOT NULL DEFAULT 'text',
     `media_url` VARCHAR(255) DEFAULT NULL,
     `poll_question` VARCHAR(255) DEFAULT NULL,
     `poll_options` JSON DEFAULT NULL,
     `story_title` VARCHAR(120) DEFAULT NULL,
     `story_caption` VARCHAR(255) DEFAULT NULL,
     `story_credit` VARCHAR(120) DEFAULT NULL,
+    `shared_news_id` INT UNSIGNED DEFAULT NULL,
+    `shared_news_title` VARCHAR(255) DEFAULT NULL,
+    `shared_news_slug` VARCHAR(255) DEFAULT NULL,
+    `shared_news_excerpt` TEXT DEFAULT NULL,
+    `shared_news_tag` VARCHAR(120) DEFAULT NULL,
+    `shared_news_image` VARCHAR(255) DEFAULT NULL,
+    `shared_news_source_url` VARCHAR(255) DEFAULT NULL,
+    `shared_news_published_at` DATETIME DEFAULT NULL,
     `status` ENUM('published', 'scheduled', 'draft') NOT NULL DEFAULT 'published',
     `scheduled_for` DATETIME DEFAULT NULL,
     `published_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -152,6 +188,7 @@ CREATE TABLE `community_posts` (
     KEY `community_posts_user_id_foreign` (`user_id`),
     KEY `community_posts_status_index` (`status`),
     KEY `community_posts_scheduled_for_index` (`scheduled_for`),
+    KEY `community_posts_shared_news_id_index` (`shared_news_id`),
     CONSTRAINT `community_posts_user_id_foreign`
         FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
         ON DELETE CASCADE ON UPDATE CASCADE
@@ -204,11 +241,13 @@ CREATE TABLE `community_post_mentions` (
     `author_id` INT UNSIGNED NOT NULL,
     `mentioned_user_id` INT UNSIGNED NOT NULL,
     `notified_at` DATETIME DEFAULT NULL,
+    `viewed_at` DATETIME DEFAULT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `community_post_mentions_post_user_unique` (`post_id`, `mentioned_user_id`),
     KEY `community_post_mentions_post_id_foreign` (`post_id`),
     KEY `community_post_mentions_mentioned_user_id_foreign` (`mentioned_user_id`),
+    KEY `community_post_mentions_viewed_index` (`viewed_at`),
     CONSTRAINT `community_post_mentions_post_id_foreign`
         FOREIGN KEY (`post_id`) REFERENCES `community_posts` (`id`)
         ON DELETE CASCADE ON UPDATE CASCADE,

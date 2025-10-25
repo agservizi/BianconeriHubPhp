@@ -33,7 +33,16 @@ function bhContentTypeIncludesStory(PDO $pdo): bool
 }
 
 try {
-    $pdo->beginTransaction();
+    $transactionStarted = false;
+    if (!$pdo->inTransaction()) {
+        try {
+            $transactionStarted = $pdo->beginTransaction();
+        } catch (Throwable $transactionException) {
+            // ALTER TABLE statements auto-commit; log and continue without an explicit transaction.
+            fwrite(STDOUT, "Warning: unable to start transaction, continuing without it.\n");
+            $transactionStarted = false;
+        }
+    }
 
     if (!bhContentTypeIncludesStory($pdo)) {
         $pdo->exec("ALTER TABLE community_posts MODIFY content_type ENUM('text','photo','gallery','poll','story') NOT NULL DEFAULT 'text'");
@@ -63,7 +72,9 @@ try {
         fwrite(STDOUT, "story_credit column already present.\n");
     }
 
-    $pdo->commit();
+    if ($pdo->inTransaction()) {
+        $pdo->commit();
+    }
     fwrite(STDOUT, "Story migration completed successfully.\n");
     exit(0);
 } catch (Throwable $exception) {

@@ -2,6 +2,8 @@
 $loggedUser = getLoggedInUser();
 $oldUsername = getOldInput('username');
 $oldEmail = getOldInput('email');
+$oldFirstName = getOldInput('first_name');
+$oldLastName = getOldInput('last_name');
 ?>
 <section class="space-y-6 mx-auto max-w-5xl">
     <div class="text-center space-y-2">
@@ -18,6 +20,16 @@ $oldEmail = getOldInput('email');
         <form action="" method="post" class="bg-gray-900 p-6 rounded-2xl shadow-lg space-y-5">
             <input type="hidden" name="form_type" value="register">
             <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
+            <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-2">
+                    <label for="reg-first-name" class="text-sm font-medium">Nome</label>
+                    <input id="reg-first-name" name="first_name" type="text" maxlength="80" value="<?php echo htmlspecialchars((string) $oldFirstName, ENT_QUOTES, 'UTF-8'); ?>" placeholder="Nome" class="w-full bg-black/70 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white">
+                </div>
+                <div class="space-y-2">
+                    <label for="reg-last-name" class="text-sm font-medium">Cognome</label>
+                    <input id="reg-last-name" name="last_name" type="text" maxlength="80" value="<?php echo htmlspecialchars((string) $oldLastName, ENT_QUOTES, 'UTF-8'); ?>" placeholder="Cognome" class="w-full bg-black/70 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white">
+                </div>
+            </div>
             <div class="space-y-2">
                 <label for="reg-username" class="text-sm font-medium">Username</label>
                 <input id="reg-username" name="username" type="text" value="<?php echo htmlspecialchars($oldUsername, ENT_QUOTES, 'UTF-8'); ?>" placeholder="Username" class="w-full bg-black/70 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white" required>

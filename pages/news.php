@@ -44,12 +44,29 @@ $engagementSummary = getNewsEngagementSummary($newsIds, $loggedUser['id'] ?? nul
                     <p class="text-xs text-gray-500 uppercase tracking-wide"><?php echo htmlspecialchars($publishedLabel, ENT_QUOTES, 'UTF-8'); ?></p>
                 <?php endif; ?>
                 <p class="text-sm text-gray-400 leading-relaxed"><?php echo htmlspecialchars($item['excerpt'], ENT_QUOTES, 'UTF-8'); ?></p>
-                <a href="?page=news_article&amp;slug=<?php echo urlencode($slug); ?>" class="inline-flex items-center gap-2 text-sm font-medium text-white hover:text-juventus-silver transition-all" title="Leggi di più">
-                    Leggi di più
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                    </svg>
-                </a>
+                <div class="flex flex-wrap items-center gap-2">
+                    <a href="?page=news_article&amp;slug=<?php echo urlencode($slug); ?>" class="inline-flex items-center gap-2 text-sm font-medium text-white hover:text-juventus-silver transition-all" title="Leggi di più">
+                        Leggi di più
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                    </a>
+                    <?php if ($loggedUser): ?>
+                        <a href="?page=community&amp;share_news=<?php echo (int) ($item['id'] ?? 0); ?>#community-composer" class="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white transition-all hover:bg-white hover:text-black" title="Condividi con la community">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-4 w-4">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M18 9a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 9a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 21a3.75 3.75 0 0 0-7.5 0v0" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21v-.75A4.5 4.5 0 0 1 6.75 15h.5" />
+                            </svg>
+                            Condividi con la community
+                        </a>
+                    <?php else: ?>
+                        <a href="?page=login" class="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/70 transition-all hover:text-white" title="Accedi per condividere">
+                            Accedi per condividere
+                        </a>
+                    <?php endif; ?>
+                </div>
                 <div class="flex items-center justify-between text-xs text-gray-500 uppercase tracking-wide">
                     <span class="inline-flex items-center gap-1">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">

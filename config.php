@@ -14,6 +14,9 @@ if (!function_exists('loadEnvFile')) {
         }
 
         $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($lines === false) {
+            return;
+        }
 
         foreach ($lines as $line) {
             $trimmed = trim($line);
@@ -26,25 +29,31 @@ if (!function_exists('loadEnvFile')) {
                 continue;
             }
 
-            [$name, $value] = explode('=', $trimmed, 2);
-            $name = trim($name);
-            $value = trim($value);
+            [$key, $value] = explode('=', $trimmed, 2);
+            $key = trim($key);
 
+            if ($key === '') {
+                continue;
+            }
+
+            $value = trim($value);
             if ($value !== '') {
-                $firstChar = $value[0];
-                $lastChar = substr($value, -1);
-                if (($firstChar === "'" && $lastChar === "'") || ($firstChar === '"' && $lastChar === '"')) {
+                $quote = $value[0];
+                if (($quote === '"' || $quote === "'") && substr($value, -1) === $quote) {
                     $value = substr($value, 1, -1);
                 }
             }
 
-            $value = str_replace(['\\n', '\\r'], ["\n", "\r"], $value);
-
-            $_ENV[$name] = $value;
-            $_SERVER[$name] = $value;
-            putenv($name . '=' . $value);
+            $_ENV[$key] = $value;
+            $_SERVER[$key] = $value;
+            putenv($key . '=' . $value);
         }
     }
+}
+
+$envPath = __DIR__ . DIRECTORY_SEPARATOR . '.env';
+if (is_file($envPath)) {
+    loadEnvFile($envPath);
 }
 
 if (!function_exists('env')) {
@@ -67,42 +76,54 @@ if (!function_exists('env')) {
     }
 }
 
-$envPath = __DIR__ . '/.env';
-loadEnvFile($envPath);
+$appName = env('APP_NAME', 'BianconeriHub');
+$appTagline = env('APP_TAGLINE', 'Il cuore pulsante dei tifosi juventini');
+$appTimezone = env('APP_TIMEZONE', 'Europe/Rome');
+$appDebug = filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN);
 
-$timezone = env('APP_TIMEZONE');
-if (is_string($timezone) && $timezone !== '') {
-    date_default_timezone_set($timezone);
+if (is_string($appTimezone) && $appTimezone !== '') {
+    @date_default_timezone_set($appTimezone);
 }
 
 $sessionName = env('SESSION_NAME', 'bianconerihub_session');
-if (session_status() === PHP_SESSION_NONE) {
+if (session_status() !== PHP_SESSION_ACTIVE) {
     if (is_string($sessionName) && $sessionName !== '') {
         session_name($sessionName);
     }
+
+    $cookieParams = session_get_cookie_params();
+    $secure = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    session_set_cookie_params([
+        'lifetime' => $cookieParams['lifetime'],
+        'path' => $cookieParams['path'] ?: '/',
+        'domain' => $cookieParams['domain'],
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => $secure ? 'None' : 'Lax',
+    ]);
+
     session_start();
 }
 
-$siteName = env('APP_NAME', 'BianconeriHub');
-$siteTagline = env('APP_TAGLINE', 'Il cuore pulsante dei tifosi juventini');
-$baseUrl = rtrim((string) env('BASE_URL', ''), '/');
-$appDebug = filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN);
-
-$databaseConfig = [
-    'driver' => env('DB_DRIVER', 'mysql'),
-    'host' => env('DB_HOST', '127.0.0.1'),
-    'port' => (int) env('DB_PORT', 3306),
-    'database' => env('DB_NAME', 'bianconerihub'),
-    'username' => env('DB_USER', 'root'),
-    'password' => env('DB_PASSWORD', ''),
-    'charset' => env('DB_CHARSET', 'utf8mb4'),
-];
-
 function getDatabaseConfig(): array
 {
-    global $databaseConfig;
+    static $config = null;
 
-    return $databaseConfig;
+    if ($config !== null) {
+        return $config;
+    }
+
+    $config = [
+        'driver' => env('DB_DRIVER', 'mysql'),
+        'host' => env('DB_HOST', '127.0.0.1'),
+        'port' => (int) env('DB_PORT', 3306),
+        'database' => env('DB_NAME', 'bianconerihub'),
+        'username' => env('DB_USER', 'root'),
+        'password' => env('DB_PASSWORD', ''),
+        'charset' => env('DB_CHARSET', 'utf8mb4'),
+    ];
+
+    return $config;
 }
 
 function getDatabaseConnection(): ?PDO
@@ -148,6 +169,371 @@ function getDatabaseConnection(): ?PDO
     }
 
     return $connection;
+}
+
+function getApplicationBaseUrl(): string
+{
+    static $cached;
+
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    $base = trim((string) env('BASE_URL', ''));
+
+    if ($base === '') {
+        $httpsFlag = $_SERVER['HTTPS'] ?? '';
+        $isSecure = is_string($httpsFlag) && strtolower($httpsFlag) !== 'off' && $httpsFlag !== '';
+        $scheme = $isSecure ? 'https' : 'http';
+        $host = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? 'localhost');
+
+        if (strpos($host, ':') === false) {
+            $port = isset($_SERVER['SERVER_PORT']) ? (int) $_SERVER['SERVER_PORT'] : 0;
+            if ($port > 0 && !in_array($port, [80, 443], true)) {
+                $host .= ':' . $port;
+            }
+        }
+
+        $base = $scheme . '://' . $host;
+    }
+
+    $cached = rtrim($base, '/');
+
+    return $cached;
+}
+
+function appUrl(string $path = ''): string
+{
+    $base = getApplicationBaseUrl();
+    $normalized = ltrim($path);
+
+    if ($normalized === '') {
+        return $base;
+    }
+
+    if (stripos($normalized, 'http://') === 0 || stripos($normalized, 'https://') === 0) {
+        return $normalized;
+    }
+
+    $firstChar = $normalized[0];
+
+    if ($firstChar === '?') {
+        return $base . '/index.php' . $normalized;
+    }
+
+    if ($firstChar === '/') {
+        return $base . $normalized;
+    }
+
+    return $base . '/' . ltrim($normalized, '/');
+}
+
+function getMailFromAddress(): string
+{
+    $address = trim((string) env('MAIL_FROM_ADDRESS', ''));
+
+    if ($address === '') {
+        $address = 'no-reply@bianconerihub.com';
+    }
+
+    return $address;
+}
+
+function getMailFromName(): string
+{
+    $name = trim((string) env('MAIL_FROM_NAME', 'BianconeriHub'));
+
+    return $name !== '' ? $name : 'BianconeriHub';
+}
+
+function getResendClient()
+{
+    static $initialised = false;
+    static $client = null;
+
+    if ($initialised) {
+        return $client;
+    }
+
+    $initialised = true;
+
+    $apiKey = trim((string) env('RESEND_API_KEY', ''));
+
+    if ($apiKey === '' || !class_exists('Resend')) {
+        return $client;
+    }
+
+    try {
+        $client = call_user_func(['Resend', 'client'], $apiKey);
+    } catch (Throwable $exception) {
+        error_log('[BianconeriHub] Unable to initialise Resend client: ' . $exception->getMessage());
+        $client = null;
+    }
+
+    return $client;
+}
+
+function renderEmailLayout(array $data): string
+{
+    $title = (string) ($data['title'] ?? '');
+    $preheader = (string) ($data['preheader'] ?? '');
+
+    $paragraphs = $data['paragraphs'] ?? [];
+    if (!is_array($paragraphs)) {
+        $paragraphs = [$paragraphs];
+    }
+
+    $cta = $data['cta'] ?? null;
+    $ctaLabel = '';
+    $ctaUrl = '';
+    if (is_array($cta)) {
+        $ctaLabel = trim((string) ($cta['label'] ?? ''));
+        $ctaUrl = trim((string) ($cta['url'] ?? ''));
+    }
+
+    $footerLines = $data['footer'] ?? [];
+    if (!is_array($footerLines)) {
+        $footerLines = [$footerLines];
+    }
+    if (empty($footerLines)) {
+        $footerLines = [
+            'Se non hai richiesto questa email puoi ignorarla in sicurezza.',
+            '© ' . date('Y') . ' BianconeriHub. Tutti i diritti riservati.',
+        ];
+    }
+
+    $paragraphHtml = '';
+    foreach ($paragraphs as $paragraph) {
+        $paragraphText = trim((string) $paragraph);
+        if ($paragraphText === '') {
+            continue;
+        }
+        $paragraphHtml .= '<p style="margin:0 0 16px; font-size:15px; line-height:1.6; color:#e5e7eb;">' . htmlspecialchars($paragraphText, ENT_QUOTES, 'UTF-8') . '</p>';
+    }
+
+    $ctaHtml = '';
+    if ($ctaLabel !== '' && $ctaUrl !== '') {
+        $ctaHtml = '<table role="presentation" cellspacing="0" cellpadding="0" style="margin:24px 0"><tr><td><a href="' . htmlspecialchars($ctaUrl, ENT_QUOTES, 'UTF-8') . '" style="display:inline-block; padding:14px 28px; background-color:#ffffff; color:#000000; font-weight:600; border-radius:9999px; text-decoration:none;">' . htmlspecialchars($ctaLabel, ENT_QUOTES, 'UTF-8') . '</a></td></tr></table>';
+    }
+
+    $footerHtml = '';
+    foreach ($footerLines as $line) {
+        $lineText = trim((string) $line);
+        if ($lineText === '') {
+            continue;
+        }
+        $footerHtml .= '<p style="margin:0 0 8px; font-size:12px; line-height:1.6; color:#9ca3af;">' . htmlspecialchars($lineText, ENT_QUOTES, 'UTF-8') . '</p>';
+    }
+
+    $titleEscaped = htmlspecialchars($title !== '' ? $title : 'BianconeriHub', ENT_QUOTES, 'UTF-8');
+    $preheaderBlock = $preheader !== ''
+        ? '<div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent; line-height:0;">' . htmlspecialchars($preheader, ENT_QUOTES, 'UTF-8') . '</div>'
+        : '';
+
+    return <<<HTML
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{$titleEscaped}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#080808; color:#f9fafb; font-family:'Inter',Arial,sans-serif;">
+    {$preheaderBlock}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#080808; padding:24px 0;">
+        <tr>
+            <td align="center">
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px; max-width:90%; background-color:#111827; border-radius:24px; overflow:hidden; border:1px solid rgba(255,255,255,0.08);">
+                    <tr>
+                        <td style="padding:32px;">
+                            <h1 style="margin:0 0 16px; font-size:24px; font-weight:700; color:#ffffff; letter-spacing:0.02em;">{$titleEscaped}</h1>
+                            {$paragraphHtml}
+                            {$ctaHtml}
+                            <p style="margin:24px 0 0; font-size:15px; line-height:1.6; color:#e5e7eb;">Forza Juventus,<br><strong style="color:#ffffff;">Il team di BianconeriHub</strong></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:24px 32px; background-color:#0b0f19;">
+                            {$footerHtml}
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+HTML;
+}
+
+function buildEmailPlainText(string $title, array $paragraphs, ?string $ctaLabel, ?string $ctaUrl, array $footerLines = []): string
+{
+    $lines = [];
+    $normalizedTitle = trim($title);
+
+    if ($normalizedTitle !== '') {
+        $lines[] = $normalizedTitle;
+        $lines[] = str_repeat('=', mb_strlen($normalizedTitle));
+        $lines[] = '';
+    }
+
+    foreach ($paragraphs as $paragraph) {
+        $paragraphText = trim((string) $paragraph);
+        if ($paragraphText === '') {
+            continue;
+        }
+        $lines[] = $paragraphText;
+        $lines[] = '';
+    }
+
+    $ctaLabelText = $ctaLabel !== null ? trim($ctaLabel) : '';
+    $ctaUrlText = $ctaUrl !== null ? trim($ctaUrl) : '';
+
+    if ($ctaLabelText !== '' && $ctaUrlText !== '') {
+        $lines[] = $ctaLabelText . ': ' . $ctaUrlText;
+        $lines[] = '';
+    }
+
+    $lines[] = 'Forza Juventus!';
+    $lines[] = 'Il team di BianconeriHub';
+
+    $filteredFooter = [];
+    foreach ($footerLines as $line) {
+        $lineText = trim((string) $line);
+        if ($lineText !== '') {
+            $filteredFooter[] = $lineText;
+        }
+    }
+
+    if (!empty($filteredFooter)) {
+        $lines[] = '';
+        foreach ($filteredFooter as $line) {
+            $lines[] = $line;
+        }
+    }
+
+    return trim(implode("\n", $lines));
+}
+
+function sendEmailMessage(string $toEmail, string $subject, string $htmlBody, string $textBody = '', ?string $toName = null): bool
+{
+    $client = getResendClient();
+    if (!$client) {
+        return false;
+    }
+
+    if (!filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+        return false;
+    }
+
+    $fromEmail = getMailFromAddress();
+    if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
+        return false;
+    }
+
+    $fromName = getMailFromName();
+    $from = $fromName !== '' ? sprintf('%s <%s>', $fromName, $fromEmail) : $fromEmail;
+    $recipient = ($toName !== null && trim($toName) !== '') ? sprintf('%s <%s>', trim($toName), $toEmail) : $toEmail;
+
+    $payload = [
+        'from' => $from,
+        'to' => [$recipient],
+        'subject' => $subject,
+        'html' => $htmlBody,
+    ];
+
+    if ($textBody !== '') {
+        $payload['text'] = $textBody;
+    }
+
+    try {
+        $client->emails->send($payload);
+        return true;
+    } catch (Throwable $exception) {
+        error_log('[BianconeriHub] Unable to send email via Resend: ' . $exception->getMessage());
+    }
+
+    return false;
+}
+
+function sendWelcomeEmail(array $user): void
+{
+    $email = trim((string) ($user['email'] ?? ''));
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return;
+    }
+
+    $displayName = buildUserDisplayName($user['first_name'] ?? null, $user['last_name'] ?? null, (string) ($user['username'] ?? ''));
+
+    $subject = 'Benvenuto su BianconeriHub';
+    $ctaUrl = appUrl('?page=community');
+
+    $paragraphs = [
+        'Ciao ' . $displayName . ',',
+        'Benvenuto a bordo di BianconeriHub! Da oggi hai accesso alla nostra curva digitale con discussioni live, statistiche aggiornate e contenuti esclusivi dedicati ai tifosi juventini.',
+        'Personalizza il tuo profilo, ottieni badge speciali e inizia subito a interagire con la community bianconera.',
+    ];
+
+    $footerLines = [
+        'Ricevi questa email perché hai appena creato un account su BianconeriHub.',
+        '© ' . date('Y') . ' BianconeriHub. Tutti i diritti riservati.',
+    ];
+
+    $html = renderEmailLayout([
+        'title' => $subject,
+        'preheader' => 'Hai ufficialmente un posto nella nostra curva digitale.',
+        'paragraphs' => $paragraphs,
+        'cta' => [
+            'label' => 'Entra nella community',
+            'url' => $ctaUrl,
+        ],
+        'footer' => $footerLines,
+    ]);
+
+    $text = buildEmailPlainText($subject, $paragraphs, 'Entra nella community', $ctaUrl, $footerLines);
+
+    sendEmailMessage($email, $subject, $html, $text, $displayName);
+}
+
+function sendPasswordResetEmail(array $user, string $token, DateTimeInterface $expiresAt): bool
+{
+    $email = trim((string) ($user['email'] ?? ''));
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return false;
+    }
+
+    $displayName = buildUserDisplayName($user['first_name'] ?? null, $user['last_name'] ?? null, (string) ($user['username'] ?? ''));
+    $subject = 'Reimposta la tua password BianconeriHub';
+
+    $resetUrl = appUrl('?page=password_reset&token=' . urlencode($token));
+    $expiresLabel = $expiresAt->format('d/m/Y H:i');
+
+    $paragraphs = [
+        'Ciao ' . $displayName . ',',
+        'Abbiamo ricevuto la tua richiesta di reimpostare la password per accedere a BianconeriHub.',
+        'Il link resterà valido per 60 minuti (fino alle ' . $expiresLabel . '). Usalo solo se hai avviato tu la procedura.',
+        'Se non hai richiesto tu il reset, puoi ignorare in sicurezza questo messaggio.',
+    ];
+
+    $footerLines = [
+        'Se il pulsante non dovesse funzionare, copia e incolla questo link nel tuo browser: ' . $resetUrl,
+        '© ' . date('Y') . ' BianconeriHub. Tutti i diritti riservati.',
+    ];
+
+    $html = renderEmailLayout([
+        'title' => $subject,
+        'preheader' => 'Usa il link per impostare una nuova password entro i prossimi 60 minuti.',
+        'paragraphs' => $paragraphs,
+        'cta' => [
+            'label' => 'Reimposta password',
+            'url' => $resetUrl,
+        ],
+        'footer' => $footerLines,
+    ]);
+
+    $text = buildEmailPlainText($subject, $paragraphs, 'Reimposta password', $resetUrl, $footerLines);
+
+    return sendEmailMessage($email, $subject, $html, $text, $displayName);
 }
 
 function formatItalianDate(DateTimeInterface $dateTime): string
@@ -241,8 +627,17 @@ function sanitizeFeedExcerpt(?string $value, int $maxLength = 280): string
         return '';
     }
 
-    if (mb_strlen($text) > $maxLength) {
-        $text = rtrim(mb_substr($text, 0, $maxLength - 1)) . '…';
+    static $lengthFn = null;
+    static $substrFn = null;
+
+    if ($lengthFn === null) {
+        $lengthFn = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
+        $substrFn = function_exists('mb_substr') ? 'mb_substr' : 'substr';
+    }
+
+    if ($lengthFn($text) > $maxLength) {
+        $slice = $substrFn($text, 0, $maxLength - 1);
+        $text = rtrim($slice) . '…';
     }
 
     return $text;
@@ -257,14 +652,23 @@ function sanitizeFeedBody(?string $value): string
     $decoded = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $decoded = preg_replace('/<script\b[^>]*>.*?<\/script>/is', '', $decoded);
     $decoded = preg_replace('/<style\b[^>]*>.*?<\/style>/is', '', $decoded);
-    $decoded = preg_replace('/<br\s*\/?\s*>/i', "\n", $decoded);
+    $decoded = preg_replace('/<br\s*\/??\s*>/i', "\n", $decoded);
     $decoded = preg_replace('/<\/p>/i', "</p>\n", $decoded);
     $text = strip_tags($decoded);
     $text = preg_replace("/\n{3,}/", "\n\n", $text);
     $text = trim($text);
 
-    if (mb_strlen($text) > 5000) {
-        $text = rtrim(mb_substr($text, 0, 5000)) . '…';
+    static $lengthFn = null;
+    static $substrFn = null;
+
+    if ($lengthFn === null) {
+        $lengthFn = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
+        $substrFn = function_exists('mb_substr') ? 'mb_substr' : 'substr';
+    }
+
+    if ($lengthFn($text) > 5000) {
+        $slice = $substrFn($text, 0, 5000);
+        $text = rtrim($slice) . '…';
     }
 
     return $text;
@@ -316,6 +720,36 @@ function ensureMatchesTableSupportsExternalSource(PDO $pdo): void
         $sourceCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'source'");
         if ($sourceCheck && $sourceCheck->rowCount() === 0) {
             $pdo->exec("ALTER TABLE matches ADD COLUMN source VARCHAR(40) DEFAULT NULL AFTER external_id");
+        }
+
+        $homeTeamCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'home_team'");
+        if ($homeTeamCheck && $homeTeamCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD COLUMN home_team VARCHAR(120) DEFAULT NULL AFTER opponent");
+        }
+
+        $awayTeamCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'away_team'");
+        if ($awayTeamCheck && $awayTeamCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD COLUMN away_team VARCHAR(120) DEFAULT NULL AFTER home_team");
+        }
+
+        $juventusHomeCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'juventus_is_home'");
+        if ($juventusHomeCheck && $juventusHomeCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD COLUMN juventus_is_home TINYINT(1) DEFAULT NULL AFTER away_team");
+        }
+
+        $statusCodeCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'status_code'");
+        if ($statusCodeCheck && $statusCodeCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD COLUMN status_code VARCHAR(40) DEFAULT NULL AFTER status");
+        }
+
+        $homeScoreCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'home_score'");
+        if ($homeScoreCheck && $homeScoreCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD COLUMN home_score TINYINT UNSIGNED DEFAULT NULL AFTER status_code");
+        }
+
+        $awayScoreCheck = $pdo->query("SHOW COLUMNS FROM matches LIKE 'away_score'");
+        if ($awayScoreCheck && $awayScoreCheck->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE matches ADD COLUMN away_score TINYINT UNSIGNED DEFAULT NULL AFTER home_score");
         }
 
         $uniqueIndexCheck = $pdo->query("SHOW INDEX FROM matches WHERE Key_name = 'matches_external_id_unique'");
@@ -454,6 +888,116 @@ function mapFootballDataStatus(?string $status, ?array $score = null): string
     return $labels[$normalized] ?? ucfirst(strtolower($normalized));
 }
 
+function extractMatchScores(?array $score): array
+{
+    if (!is_array($score)) {
+        return [null, null];
+    }
+
+    $sections = [
+        $score['fullTime'] ?? null,
+        $score['regularTime'] ?? null,
+        $score['halfTime'] ?? null,
+    ];
+
+    foreach ($sections as $section) {
+        if (!is_array($section)) {
+            continue;
+        }
+
+        $home = $section['home'] ?? $section['homeTeam'] ?? null;
+        $away = $section['away'] ?? $section['awayTeam'] ?? null;
+
+        if (is_numeric($home) && is_numeric($away)) {
+            return [(int) $home, (int) $away];
+        }
+    }
+
+    $home = $score['fullTime']['homeTeam'] ?? $score['fullTime']['home'] ?? null;
+    $away = $score['fullTime']['awayTeam'] ?? $score['fullTime']['away'] ?? null;
+
+    return [
+        is_numeric($home) ? (int) $home : null,
+        is_numeric($away) ? (int) $away : null,
+    ];
+}
+
+function estimateMatchMinuteLabel(?DateTimeInterface $kickoff): ?string
+{
+    if (!$kickoff instanceof DateTimeInterface) {
+        return null;
+    }
+
+    $now = new DateTime();
+    $secondsDiff = $now->getTimestamp() - $kickoff->getTimestamp();
+    if ($secondsDiff < 0) {
+        return null;
+    }
+
+    $minutes = (int) floor($secondsDiff / 60);
+
+    if ($minutes < 45) {
+        return (string) max(1, $minutes + 1);
+    }
+
+    if ($minutes < 60) {
+        return '45+';
+    }
+
+    if ($minutes < 105) {
+        $adjusted = $minutes - 15;
+        $minute = max(46, $adjusted + 1);
+        return $minute >= 90 ? '90+' : (string) $minute;
+    }
+
+    if ($minutes < 120) {
+        return '90+';
+    }
+
+    return '90+';
+}
+
+function buildMatchLiveMetadata(array $match): array
+{
+    $statusCode = strtoupper((string) ($match['status_code'] ?? ''));
+    if ($statusCode === '') {
+        $statusCode = 'SCHEDULED';
+    }
+
+    $kickoff = $match['kickoff_at'] ?? null;
+    if (!$kickoff instanceof DateTimeInterface && isset($match['kickoff_at']) && $match['kickoff_at'] instanceof DateTimeInterface) {
+        $kickoff = $match['kickoff_at'];
+    }
+
+    $homeScore = $match['home_score'] ?? null;
+    $awayScore = $match['away_score'] ?? null;
+
+    $homeScore = is_numeric($homeScore) ? (int) $homeScore : null;
+    $awayScore = is_numeric($awayScore) ? (int) $awayScore : null;
+
+    $isLive = $statusCode === 'IN_PLAY';
+    $isPaused = $statusCode === 'PAUSED';
+    $isFinished = $statusCode === 'FINISHED';
+    $isPostponed = $statusCode === 'POSTPONED';
+
+    $minuteLabel = null;
+    if (($isLive || $isPaused) && $kickoff instanceof DateTimeInterface) {
+        $minuteLabel = estimateMatchMinuteLabel($kickoff);
+    }
+
+    return [
+        'status_code' => $statusCode,
+        'status_label' => $match['status'] ?? '',
+        'home_score' => $homeScore,
+        'away_score' => $awayScore,
+        'is_live' => $isLive,
+        'is_paused' => $isPaused,
+        'is_finished' => $isFinished,
+        'is_postponed' => $isPostponed,
+        'minute_label' => $minuteLabel,
+    ];
+}
+
 function syncJuventusMatchesFromApi(bool $force = false): void
 {
     static $hasSynced = false;
@@ -527,13 +1071,23 @@ function syncJuventusMatchesFromApi(bool $force = false): void
             $venue = $isHome ? 'Allianz Stadium' : ($homeTeamName !== '' ? $homeTeamName : 'Da definire');
         }
 
+        [$homeScore, $awayScore] = extractMatchScores($match['score'] ?? null);
+        $statusRaw = strtoupper((string) ($match['status'] ?? ''));
+        $statusLabel = mapFootballDataStatus($match['status'] ?? null, $match['score'] ?? null);
+
         $matchesToPersist[] = [
             'external_id' => (string) $match['id'],
             'competition' => $match['competition']['name'] ?? 'Juventus',
             'opponent' => $opponent,
+            'home_team' => $homeTeamName !== '' ? $homeTeamName : ($isHome ? 'Juventus' : $opponent),
+            'away_team' => $awayTeamName !== '' ? $awayTeamName : ($isHome ? $opponent : 'Juventus'),
+            'juventus_is_home' => $isHome ? 1 : 0,
             'venue' => $venue,
             'kickoff_at' => $kickoffUtc->format('Y-m-d H:i:s'),
-            'status' => mapFootballDataStatus($match['status'] ?? null, $match['score'] ?? null),
+            'status' => $statusLabel,
+            'status_code' => $statusRaw !== '' ? $statusRaw : 'SCHEDULED',
+            'home_score' => $homeScore,
+            'away_score' => $awayScore,
             'broadcast' => '',
         ];
     }
@@ -555,7 +1109,7 @@ function syncJuventusMatchesFromApi(bool $force = false): void
         $delete = $pdo->prepare('DELETE FROM matches WHERE source = :source AND kickoff_at >= (NOW() - INTERVAL 30 DAY)');
         $delete->execute(['source' => 'football-data']);
 
-        $insert = $pdo->prepare('INSERT INTO matches (external_id, source, competition, opponent, venue, kickoff_at, status, broadcast) VALUES (:external_id, :source, :competition, :opponent, :venue, :kickoff_at, :status, :broadcast) ON DUPLICATE KEY UPDATE competition = VALUES(competition), opponent = VALUES(opponent), venue = VALUES(venue), kickoff_at = VALUES(kickoff_at), status = VALUES(status), broadcast = VALUES(broadcast), updated_at = CURRENT_TIMESTAMP');
+        $insert = $pdo->prepare('INSERT INTO matches (external_id, source, competition, opponent, home_team, away_team, juventus_is_home, venue, kickoff_at, status, status_code, home_score, away_score, broadcast) VALUES (:external_id, :source, :competition, :opponent, :home_team, :away_team, :juventus_is_home, :venue, :kickoff_at, :status, :status_code, :home_score, :away_score, :broadcast) ON DUPLICATE KEY UPDATE competition = VALUES(competition), opponent = VALUES(opponent), home_team = VALUES(home_team), away_team = VALUES(away_team), juventus_is_home = VALUES(juventus_is_home), venue = VALUES(venue), kickoff_at = VALUES(kickoff_at), status = VALUES(status), status_code = VALUES(status_code), home_score = VALUES(home_score), away_score = VALUES(away_score), broadcast = VALUES(broadcast), updated_at = CURRENT_TIMESTAMP');
 
         foreach ($matchesToPersist as $row) {
             $insert->execute([
@@ -563,9 +1117,15 @@ function syncJuventusMatchesFromApi(bool $force = false): void
                 'source' => 'football-data',
                 'competition' => $row['competition'],
                 'opponent' => $row['opponent'],
+                'home_team' => $row['home_team'],
+                'away_team' => $row['away_team'],
+                'juventus_is_home' => $row['juventus_is_home'],
                 'venue' => $row['venue'],
                 'kickoff_at' => $row['kickoff_at'],
                 'status' => $row['status'],
+                'status_code' => $row['status_code'],
+                'home_score' => $row['home_score'],
+                'away_score' => $row['away_score'],
                 'broadcast' => $row['broadcast'],
             ]);
         }
@@ -583,7 +1143,8 @@ function syncNewsFeed(bool $force = false): void
     static $lastSyncTimestamp = null;
 
     $sessionKey = 'bh_news_last_sync';
-    $sessionTimestamp = isset($_SESSION[$sessionKey]) ? (int) $_SESSION[$sessionKey] : 0;
+    $sessionActive = session_status() === PHP_SESSION_ACTIVE && PHP_SAPI !== 'cli' && !defined('BH_NEWS_SYNC_SCRIPT');
+    $sessionTimestamp = ($sessionActive && isset($_SESSION[$sessionKey])) ? (int) $_SESSION[$sessionKey] : 0;
 
     $pdo = getDatabaseConnection();
     if (!$pdo) {
@@ -599,7 +1160,9 @@ function syncNewsFeed(bool $force = false): void
                 $dbTimestamp = (int) ($result->fetchColumn() ?: 0);
                 if ($dbTimestamp > 0) {
                     $lastSyncTimestamp = $dbTimestamp;
-                    $_SESSION[$sessionKey] = $dbTimestamp;
+                    if ($sessionActive) {
+                        $_SESSION[$sessionKey] = $dbTimestamp;
+                    }
                 }
             } catch (PDOException $exception) {
                 error_log('[BianconeriHub] Unable to read news sync timestamp: ' . $exception->getMessage());
@@ -611,8 +1174,14 @@ function syncNewsFeed(bool $force = false): void
         return;
     }
 
+    if (!function_exists('simplexml_load_string')) {
+        error_log('[BianconeriHub] SimpleXML extension not available; news sync skipped.');
+        return;
+    }
+
     $feedUrl = env('NEWS_FEED_URL', 'https://www.tuttojuve.com/rss');
     if (!is_string($feedUrl) || !filter_var($feedUrl, FILTER_VALIDATE_URL)) {
+        error_log('[BianconeriHub] Invalid NEWS_FEED_URL configuration.');
         return;
     }
 
@@ -623,14 +1192,33 @@ function syncNewsFeed(bool $force = false): void
         ],
     ]);
 
+    if (function_exists('error_clear_last')) {
+        error_clear_last();
+    }
+
     $feedContent = @file_get_contents($feedUrl, false, $context);
     if ($feedContent === false) {
+        $lastError = error_get_last();
+        $detail = $lastError && isset($lastError['message']) ? $lastError['message'] : 'unknown error';
+        error_log('[BianconeriHub] Unable to download news feed: ' . $detail);
         return;
     }
 
     libxml_use_internal_errors(true);
+    $lengthFn = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
+    $substrFn = function_exists('mb_substr') ? 'mb_substr' : 'substr';
     $xml = simplexml_load_string($feedContent, 'SimpleXMLElement', LIBXML_NOCDATA);
     if (!$xml || !isset($xml->channel->item)) {
+        $errors = libxml_get_errors();
+        if (!empty($errors)) {
+            $firstError = reset($errors);
+            $message = is_object($firstError) && property_exists($firstError, 'message')
+                ? trim((string) $firstError->message)
+                : 'invalid XML structure';
+            error_log('[BianconeriHub] Unable to parse news feed XML: ' . $message);
+        } else {
+            error_log('[BianconeriHub] Unable to parse news feed XML: invalid structure.');
+        }
         libxml_clear_errors();
         return;
     }
@@ -656,8 +1244,8 @@ function syncNewsFeed(bool $force = false): void
         if ($category === '') {
             $category = 'TuttoJuve';
         }
-        if (mb_strlen($category) > 40) {
-            $category = mb_substr($category, 0, 40);
+        if ($lengthFn($category) > 40) {
+            $category = $substrFn($category, 0, 40);
         }
 
         $description = (string) ($item->description ?? '');
@@ -720,7 +1308,88 @@ function syncNewsFeed(bool $force = false): void
 
     libxml_clear_errors();
     $lastSyncTimestamp = time();
-    $_SESSION[$sessionKey] = $lastSyncTimestamp;
+    if ($sessionActive) {
+        $_SESSION[$sessionKey] = $lastSyncTimestamp;
+    }
+}
+
+function triggerPeriodicNewsSync(): void
+{
+    static $checked = false;
+
+    if ($checked || defined('BH_NEWS_SYNC_SCRIPT')) {
+        return;
+    }
+
+    $checked = true;
+
+    $cacheDir = __DIR__ . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'cache';
+    if (!is_dir($cacheDir)) {
+        @mkdir($cacheDir, 0775, true);
+    }
+
+    if (!is_dir($cacheDir)) {
+        return;
+    }
+
+    $timestampFile = $cacheDir . DIRECTORY_SEPARATOR . 'news_sync_last_run.txt';
+    $lockFile = $cacheDir . DIRECTORY_SEPARATOR . 'news_sync.lock';
+
+    $now = time();
+    $lastRun = is_file($timestampFile) ? (int) trim((string) @file_get_contents($timestampFile)) : 0;
+    if ($lastRun > 0 && ($now - $lastRun) < 1800) {
+        return;
+    }
+
+    $lockHandle = @fopen($lockFile, 'c+');
+    if (!$lockHandle) {
+        return;
+    }
+
+    if (!flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        fclose($lockHandle);
+        return;
+    }
+
+    $lastRun = is_file($timestampFile) ? (int) trim((string) @file_get_contents($timestampFile)) : 0;
+    if ($lastRun > 0 && ($now - $lastRun) < 1800) {
+        flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+        return;
+    }
+
+    @file_put_contents($timestampFile, (string) $now, LOCK_EX);
+
+    $phpBinary = PHP_BINARY ?: 'php';
+    $scriptPath = __DIR__ . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'sync_news.php';
+
+    $commandExecuted = false;
+
+    if (stripos(PHP_OS_FAMILY, 'Windows') !== false) {
+        $escapedPhp = '"' . str_replace('"', '\"', $phpBinary) . '"';
+        $escapedScript = '"' . str_replace('"', '\"', $scriptPath) . '"';
+        $command = 'start /B "" ' . $escapedPhp . ' ' . $escapedScript;
+        $process = @popen($command, 'r');
+        if ($process !== false) {
+            pclose($process);
+            $commandExecuted = true;
+        }
+    } else {
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($scriptPath) . ' > /dev/null 2>&1 &';
+        @exec($command);
+        $commandExecuted = true;
+    }
+
+    if (!$commandExecuted) {
+        try {
+            syncNewsFeed(true);
+        } catch (Throwable $exception) {
+            error_log('[BianconeriHub] Fallback news sync failed: ' . $exception->getMessage());
+        }
+    }
+
+    flock($lockHandle, LOCK_UN);
+    fclose($lockHandle);
 }
 
 function getCommunityStats(): array
@@ -902,6 +1571,8 @@ $availablePages = [
     'user_profile' => __DIR__ . '/pages/user_profile.php',
     'login' => __DIR__ . '/pages/login.php',
     'register' => __DIR__ . '/pages/register.php',
+    'password_forgot' => __DIR__ . '/pages/password_forgot.php',
+    'password_reset' => __DIR__ . '/pages/password_reset.php',
 ];
 
 $pageTitles = [
@@ -916,6 +1587,8 @@ $pageTitles = [
     'user_profile' => 'Profilo tifoso',
     'login' => 'Accedi',
     'register' => 'Registrati',
+    'password_forgot' => 'Password dimenticata',
+    'password_reset' => 'Reimposta password',
 ];
 
 if (!isset($_SESSION['bh_csrf_token'])) {
@@ -983,6 +1656,7 @@ function getNavigationItems(): array
  */
 function getNewsItems(): array
 {
+    triggerPeriodicNewsSync();
     syncNewsFeed();
 
     $pdo = getDatabaseConnection();
@@ -1028,17 +1702,27 @@ function getUpcomingMatches(): array
     }
 
     try {
-        $statement = $pdo->query('SELECT id, competition, opponent, venue, kickoff_at, status, broadcast FROM matches WHERE kickoff_at >= (NOW() - INTERVAL 1 DAY) ORDER BY kickoff_at ASC');
+        $statement = $pdo->query('SELECT id, competition, opponent, home_team, away_team, juventus_is_home, venue, kickoff_at, status, status_code, home_score, away_score, broadcast FROM matches WHERE kickoff_at >= (NOW() - INTERVAL 1 DAY) ORDER BY kickoff_at ASC');
         $matches = [];
 
         foreach ($statement as $row) {
             $kickoff = isset($row['kickoff_at']) ? new DateTime($row['kickoff_at']) : new DateTime();
+            $juventusIsHome = null;
+            if (isset($row['juventus_is_home'])) {
+                $juventusIsHome = (int) $row['juventus_is_home'] === 1;
+            }
             $matches[] = [
                 'id' => (int) ($row['id'] ?? 0),
                 'competition' => $row['competition'] ?? '',
                 'opponent' => $row['opponent'] ?? '',
+                'home_team' => $row['home_team'] ?? null,
+                'away_team' => $row['away_team'] ?? null,
+                'juventus_is_home' => $juventusIsHome,
                 'venue' => $row['venue'] ?? '',
                 'status' => $row['status'] ?? '',
+                'status_code' => $row['status_code'] ?? null,
+                'home_score' => isset($row['home_score']) && is_numeric($row['home_score']) ? (int) $row['home_score'] : null,
+                'away_score' => isset($row['away_score']) && is_numeric($row['away_score']) ? (int) $row['away_score'] : null,
                 'broadcast' => $row['broadcast'] ?? '',
                 'kickoff_at' => $kickoff,
                 'date' => formatItalianDate($kickoff),
@@ -1073,6 +1757,29 @@ function pullFlashMessages(): array
     return $messages;
 }
 
+function buildUserDisplayName(?string $firstName, ?string $lastName, string $username): string
+{
+    $safeUsername = trim($username) !== '' ? trim($username) : 'Tifoso';
+    $first = trim((string) $firstName);
+    $last = trim((string) $lastName);
+
+    if ($first === '' && $last === '') {
+        return $safeUsername;
+    }
+
+    $parts = [];
+    if ($first !== '') {
+        $parts[] = preg_replace('/\s+/', ' ', $first);
+    }
+    if ($last !== '') {
+        $parts[] = preg_replace('/\s+/', ' ', $last);
+    }
+
+    $display = trim(implode(' ', $parts));
+
+    return $display !== '' ? $display : $safeUsername;
+}
+
 /**
  * Retrieve stored users from the session.
  */
@@ -1084,16 +1791,19 @@ function getRegisteredUsers(): array
     }
 
     try {
-        $statement = $pdo->query('SELECT id, username, email, badge, created_at FROM users ORDER BY created_at DESC');
+    $statement = $pdo->query('SELECT id, username, email, badge, first_name, last_name, created_at FROM users ORDER BY created_at DESC');
         $users = [];
 
         foreach ($statement as $row) {
             $users[] = [
                 'id' => (int) ($row['id'] ?? 0),
                 'username' => $row['username'] ?? '',
+                'first_name' => isset($row['first_name']) ? (string) $row['first_name'] : null,
+                'last_name' => isset($row['last_name']) ? (string) $row['last_name'] : null,
                 'email' => $row['email'] ?? '',
                 'badge' => $row['badge'] ?? 'Tifoso',
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+                'display_name' => buildUserDisplayName($row['first_name'] ?? null, $row['last_name'] ?? null, (string) ($row['username'] ?? '')),
             ];
         }
 
@@ -1118,7 +1828,7 @@ function findUserById(int $userId): ?array
     }
 
     try {
-        $statement = $pdo->prepare('SELECT id, username, email, badge, avatar_url, created_at, updated_at FROM users WHERE id = :id LIMIT 1');
+    $statement = $pdo->prepare('SELECT id, username, email, badge, first_name, last_name, avatar_url, created_at, updated_at FROM users WHERE id = :id LIMIT 1');
         $statement->execute(['id' => $userId]);
         $row = $statement->fetch();
 
@@ -1129,11 +1839,14 @@ function findUserById(int $userId): ?array
         return [
             'id' => (int) ($row['id'] ?? 0),
             'username' => $row['username'] ?? '',
+            'first_name' => isset($row['first_name']) ? (string) $row['first_name'] : null,
+            'last_name' => isset($row['last_name']) ? (string) $row['last_name'] : null,
             'email' => $row['email'] ?? '',
             'badge' => $row['badge'] ?? 'Tifoso',
             'avatar_url' => $row['avatar_url'] ?? null,
             'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
             'updated_at' => isset($row['updated_at']) ? normalizeToTimestamp($row['updated_at']) : null,
+            'display_name' => buildUserDisplayName($row['first_name'] ?? null, $row['last_name'] ?? null, (string) ($row['username'] ?? '')),
         ];
     } catch (PDOException $exception) {
         error_log('[BianconeriHub] Failed to find user by id: ' . $exception->getMessage());
@@ -1167,6 +1880,34 @@ function ensureUserProfilesTable(PDO $pdo): void
         $checked = true;
     } catch (PDOException $exception) {
         error_log('[BianconeriHub] Unable to ensure user_profiles table: ' . $exception->getMessage());
+        $checked = false;
+    }
+}
+
+function ensurePasswordResetsTable(PDO $pdo): void
+{
+    static $checked = false;
+
+    if ($checked) {
+        return;
+    }
+
+    try {
+        $pdo->exec('CREATE TABLE IF NOT EXISTS password_resets (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id INT UNSIGNED NOT NULL,
+            token_hash CHAR(64) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY password_resets_token_hash_unique (token_hash),
+            KEY password_resets_user_id_foreign (user_id),
+            KEY password_resets_expires_at_index (expires_at),
+            CONSTRAINT password_resets_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+        $checked = true;
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Unable to ensure password_resets table: ' . $exception->getMessage());
         $checked = false;
     }
 }
@@ -1239,7 +1980,7 @@ function getUserProfileView(string $username, ?int $viewerId = null): ?array
     ensureUserProfilesTable($pdo);
 
     try {
-        $statement = $pdo->prepare('SELECT u.id, u.username, u.email, u.badge, u.avatar_url, u.created_at, u.updated_at,
+        $statement = $pdo->prepare('SELECT u.id, u.username, u.email, u.badge, u.first_name, u.last_name, u.avatar_url, u.created_at, u.updated_at,
             p.bio, p.location, p.website, p.favorite_player, p.favorite_memory, p.cover_path
             FROM users u
             LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -1261,11 +2002,14 @@ function getUserProfileView(string $username, ?int $viewerId = null): ?array
         return [
             'id' => $userId,
             'username' => $row['username'] ?? '',
+            'first_name' => isset($row['first_name']) ? (string) $row['first_name'] : null,
+            'last_name' => isset($row['last_name']) ? (string) $row['last_name'] : null,
             'email' => $row['email'] ?? '',
             'badge' => $row['badge'] ?? 'Tifoso',
             'avatar_url' => $row['avatar_url'] ?? null,
             'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
             'updated_at' => isset($row['updated_at']) ? normalizeToTimestamp($row['updated_at']) : null,
+            'display_name' => buildUserDisplayName($row['first_name'] ?? null, $row['last_name'] ?? null, (string) ($row['username'] ?? '')),
             'bio' => trim((string) ($row['bio'] ?? '')),
             'location' => trim((string) ($row['location'] ?? '')),
             'website' => trim((string) ($row['website'] ?? '')),
@@ -1298,6 +2042,22 @@ function saveUserProfileSettings(int $userId, array $input): array
 
     ensureUserProfilesTable($pdo);
 
+    $firstName = trim((string) ($input['first_name'] ?? ''));
+    if ($firstName !== '') {
+        $firstName = preg_replace('/\s+/', ' ', $firstName);
+        if (mb_strlen($firstName) > 80) {
+            $firstName = mb_substr($firstName, 0, 80);
+        }
+    }
+
+    $lastName = trim((string) ($input['last_name'] ?? ''));
+    if ($lastName !== '') {
+        $lastName = preg_replace('/\s+/', ' ', $lastName);
+        if (mb_strlen($lastName) > 80) {
+            $lastName = mb_substr($lastName, 0, 80);
+        }
+    }
+
     $bio = trim((string) ($input['bio'] ?? ''));
     if (mb_strlen($bio) > 500) {
         $bio = mb_substr($bio, 0, 500);
@@ -1324,6 +2084,15 @@ function saveUserProfileSettings(int $userId, array $input): array
     }
 
     try {
+        $pdo->beginTransaction();
+
+        $userUpdate = $pdo->prepare('UPDATE users SET first_name = :first_name, last_name = :last_name WHERE id = :user_id');
+        $userUpdate->execute([
+            'first_name' => $firstName !== '' ? $firstName : null,
+            'last_name' => $lastName !== '' ? $lastName : null,
+            'user_id' => $userId,
+        ]);
+
         $statement = $pdo->prepare('INSERT INTO user_profiles (user_id, bio, location, website, favorite_player, favorite_memory)
             VALUES (:user_id, :bio, :location, :website, :favorite_player, :favorite_memory)
             ON DUPLICATE KEY UPDATE bio = VALUES(bio), location = VALUES(location), website = VALUES(website), favorite_player = VALUES(favorite_player), favorite_memory = VALUES(favorite_memory), updated_at = CURRENT_TIMESTAMP');
@@ -1336,8 +2105,22 @@ function saveUserProfileSettings(int $userId, array $input): array
             'favorite_memory' => $favoriteMemory !== '' ? $favoriteMemory : null,
         ]);
 
+        if ($pdo->inTransaction()) {
+            $pdo->commit();
+        }
+
+        if (isset($_SESSION['bh_current_user']) && (int) ($_SESSION['bh_current_user']['id'] ?? 0) === $userId) {
+            $_SESSION['bh_current_user']['first_name'] = $firstName !== '' ? $firstName : null;
+            $_SESSION['bh_current_user']['last_name'] = $lastName !== '' ? $lastName : null;
+            $sessionUsername = $_SESSION['bh_current_user']['username'] ?? '';
+            $_SESSION['bh_current_user']['display_name'] = buildUserDisplayName($_SESSION['bh_current_user']['first_name'] ?? null, $_SESSION['bh_current_user']['last_name'] ?? null, (string) $sessionUsername);
+        }
+
         return ['success' => true];
     } catch (PDOException $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         error_log('[BianconeriHub] Failed to save user profile settings: ' . $exception->getMessage());
     }
 
@@ -2081,8 +2864,8 @@ function searchCommunityUsers(string $query, int $limit = 12, int $offset = 0): 
             return $response;
         }
 
-        $sql = <<<SQL
-SELECT u.id, u.username, u.badge, u.avatar_url, u.created_at,
+    $sql = <<<SQL
+SELECT u.id, u.username, u.first_name, u.last_name, u.badge, u.avatar_url, u.created_at,
        CASE WHEN f.follower_id IS NULL THEN 0 ELSE 1 END AS is_following
 FROM users u
 LEFT JOIN community_followers f ON f.user_id = u.id AND f.follower_id = :viewer
@@ -2105,9 +2888,13 @@ SQL;
 
             $createdAt = normalizeToTimestamp($row['created_at'] ?? time());
 
+            $firstName = isset($row['first_name']) ? (string) $row['first_name'] : null;
+            $lastName = isset($row['last_name']) ? (string) $row['last_name'] : null;
+
             $results[] = [
                 'id' => $userId,
                 'username' => $row['username'] ?? '',
+                'display_name' => buildUserDisplayName($firstName, $lastName, (string) ($row['username'] ?? '')),
                 'badge' => $row['badge'] ?? 'Tifoso',
                 'avatar_url' => $row['avatar_url'] ?? null,
                 'created_at' => $createdAt,
@@ -2131,7 +2918,7 @@ SQL;
 
             try {
                 $fallbackSql = <<<SQL
-SELECT u.id, u.username, u.badge, u.avatar_url, u.created_at
+SELECT u.id, u.username, u.first_name, u.last_name, u.badge, u.avatar_url, u.created_at
 FROM users u
 WHERE u.username LIKE :term
 ORDER BY u.username ASC
@@ -2151,9 +2938,13 @@ SQL;
 
                     $createdAt = normalizeToTimestamp($row['created_at'] ?? time());
 
+                    $firstName = isset($row['first_name']) ? (string) $row['first_name'] : null;
+                    $lastName = isset($row['last_name']) ? (string) $row['last_name'] : null;
+
                     $results[] = [
                         'id' => $userId,
                         'username' => $row['username'] ?? '',
+                        'display_name' => buildUserDisplayName($firstName, $lastName, (string) ($row['username'] ?? '')),
                         'badge' => $row['badge'] ?? 'Tifoso',
                         'avatar_url' => $row['avatar_url'] ?? null,
                         'created_at' => $createdAt,
@@ -2363,7 +3154,7 @@ if (!function_exists('findUserByUsername')) {
         }
 
         try {
-            $statement = $pdo->prepare('SELECT id, username, email, password_hash, badge, avatar_url, created_at, updated_at FROM users WHERE LOWER(username) = LOWER(:username) LIMIT 1');
+            $statement = $pdo->prepare('SELECT id, username, email, password_hash, badge, first_name, last_name, avatar_url, created_at, updated_at FROM users WHERE LOWER(username) = LOWER(:username) LIMIT 1');
             $statement->execute(['username' => $username]);
             $user = $statement->fetch();
 
@@ -2377,9 +3168,50 @@ if (!function_exists('findUserByUsername')) {
                 $user['updated_at'] = normalizeToTimestamp($user['updated_at']);
             }
 
+            $user['display_name'] = buildUserDisplayName($user['first_name'] ?? null, $user['last_name'] ?? null, (string) ($user['username'] ?? ''));
+
             return $user;
         } catch (PDOException $exception) {
             error_log('[BianconeriHub] Failed to find user by username: ' . $exception->getMessage());
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('findUserByEmail')) {
+    function findUserByEmail(string $email): ?array
+    {
+        $normalized = trim($email);
+        if ($normalized === '') {
+            return null;
+        }
+
+        $pdo = getDatabaseConnection();
+        if (!$pdo) {
+            return null;
+        }
+
+        try {
+            $statement = $pdo->prepare('SELECT id, username, email, password_hash, badge, first_name, last_name, avatar_url, created_at, updated_at FROM users WHERE LOWER(email) = LOWER(:email) LIMIT 1');
+            $statement->execute(['email' => $normalized]);
+            $user = $statement->fetch();
+
+            if (!$user) {
+                return null;
+            }
+
+            $user['id'] = (int) ($user['id'] ?? 0);
+            $user['created_at'] = normalizeToTimestamp($user['created_at'] ?? time());
+            if (isset($user['updated_at'])) {
+                $user['updated_at'] = normalizeToTimestamp($user['updated_at']);
+            }
+
+            $user['display_name'] = buildUserDisplayName($user['first_name'] ?? null, $user['last_name'] ?? null, (string) ($user['username'] ?? ''));
+
+            return $user;
+        } catch (PDOException $exception) {
+            error_log('[BianconeriHub] Failed to find user by email: ' . $exception->getMessage());
         }
 
         return null;
@@ -2392,6 +3224,22 @@ function registerUser(array $payload): array
     $email = trim($payload['email'] ?? '');
     $password = $payload['password'] ?? '';
     $passwordConfirmation = $payload['password_confirmation'] ?? '';
+    $firstName = trim((string) ($payload['first_name'] ?? ''));
+    $lastName = trim((string) ($payload['last_name'] ?? ''));
+
+    if ($firstName !== '') {
+        $firstName = preg_replace('/\s+/', ' ', $firstName);
+        if (mb_strlen($firstName) > 80) {
+            $firstName = mb_substr($firstName, 0, 80);
+        }
+    }
+
+    if ($lastName !== '') {
+        $lastName = preg_replace('/\s+/', ' ', $lastName);
+        if (mb_strlen($lastName) > 80) {
+            $lastName = mb_substr($lastName, 0, 80);
+        }
+    }
 
     if ($username === '' || $email === '' || $password === '') {
         return ['success' => false, 'message' => 'Compila tutti i campi richiesti.'];
@@ -2434,25 +3282,34 @@ function registerUser(array $payload): array
 
         $passwordHash = password_hash($password, PASSWORD_DEFAULT);
 
-        $insert = $pdo->prepare('INSERT INTO users (username, email, password_hash, badge) VALUES (:username, :email, :password_hash, :badge)');
+        $insert = $pdo->prepare('INSERT INTO users (username, email, password_hash, badge, first_name, last_name) VALUES (:username, :email, :password_hash, :badge, :first_name, :last_name)');
         $insert->execute([
             'username' => $username,
             'email' => $email,
             'password_hash' => $passwordHash,
             'badge' => 'Nuovo tifoso',
+            'first_name' => $firstName !== '' ? $firstName : null,
+            'last_name' => $lastName !== '' ? $lastName : null,
         ]);
 
         $userId = (int) $pdo->lastInsertId();
         $pdo->commit();
 
+        $userData = [
+            'id' => $userId,
+            'username' => $username,
+            'email' => $email,
+            'badge' => 'Nuovo tifoso',
+            'first_name' => $firstName !== '' ? $firstName : null,
+            'last_name' => $lastName !== '' ? $lastName : null,
+            'display_name' => buildUserDisplayName($firstName !== '' ? $firstName : null, $lastName !== '' ? $lastName : null, $username),
+        ];
+
+        sendWelcomeEmail($userData);
+
         return [
             'success' => true,
-            'user' => [
-                'id' => $userId,
-                'username' => $username,
-                'email' => $email,
-                'badge' => 'Nuovo tifoso',
-            ],
+            'user' => $userData,
         ];
     } catch (PDOException $exception) {
         if ($pdo->inTransaction()) {
@@ -2463,6 +3320,187 @@ function registerUser(array $payload): array
 
         return ['success' => false, 'message' => 'Registrazione non riuscita. Riprova.'];
     }
+}
+
+function createPasswordResetToken(int $userId): ?array
+{
+    if ($userId <= 0) {
+        return null;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return null;
+    }
+
+    ensurePasswordResetsTable($pdo);
+
+    try {
+        $pdo->beginTransaction();
+
+        $delete = $pdo->prepare('DELETE FROM password_resets WHERE user_id = :user_id');
+        $delete->execute(['user_id' => $userId]);
+
+        try {
+            $token = bin2hex(random_bytes(32));
+        } catch (Throwable $exception) {
+            $fallback = openssl_random_pseudo_bytes(32);
+            $token = is_string($fallback) ? bin2hex($fallback) : '';
+        }
+
+        if (!is_string($token) || $token === '') {
+            $token = hash('sha256', uniqid('bh-reset', true) . microtime(true));
+        }
+
+        $tokenHash = hash('sha256', $token);
+        $expiresAt = new DateTimeImmutable('+60 minutes');
+
+        $insert = $pdo->prepare('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (:user_id, :token_hash, :expires_at)');
+        $insert->execute([
+            'user_id' => $userId,
+            'token_hash' => $tokenHash,
+            'expires_at' => $expiresAt->format('Y-m-d H:i:s'),
+        ]);
+
+        $pdo->commit();
+
+        return [
+            'token' => $token,
+            'expires_at' => $expiresAt,
+        ];
+    } catch (Throwable $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[BianconeriHub] Unable to create password reset token: ' . $exception->getMessage());
+    }
+
+    return null;
+}
+
+function getPasswordResetTokenDetails(string $token): ?array
+{
+    $normalized = trim($token);
+    if ($normalized === '') {
+        return null;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return null;
+    }
+
+    ensurePasswordResetsTable($pdo);
+
+    try {
+        $statement = $pdo->prepare('SELECT pr.id, pr.user_id, pr.token_hash, pr.expires_at, pr.created_at, u.username, u.email, u.first_name, u.last_name FROM password_resets pr INNER JOIN users u ON u.id = pr.user_id WHERE pr.token_hash = :token_hash LIMIT 1');
+        $statement->execute(['token_hash' => hash('sha256', $normalized)]);
+        $row = $statement->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        try {
+            $expiresAt = new DateTimeImmutable((string) $row['expires_at']);
+        } catch (Throwable $exception) {
+            $expiresAt = new DateTimeImmutable();
+        }
+
+        $userId = (int) ($row['user_id'] ?? 0);
+
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'user_id' => $userId,
+            'expires_at' => $expiresAt,
+            'expired' => $expiresAt < new DateTimeImmutable(),
+            'user' => [
+                'id' => $userId,
+                'username' => $row['username'] ?? '',
+                'email' => $row['email'] ?? '',
+                'first_name' => $row['first_name'] ?? null,
+                'last_name' => $row['last_name'] ?? null,
+            ],
+        ];
+    } catch (Throwable $exception) {
+        error_log('[BianconeriHub] Unable to load password reset token details: ' . $exception->getMessage());
+    }
+
+    return null;
+}
+
+function completePasswordReset(string $token, string $password, string $passwordConfirmation): array
+{
+    $normalizedToken = trim($token);
+    if ($normalizedToken === '') {
+        return ['success' => false, 'status' => 'invalid', 'message' => 'Link di reimpostazione non valido.'];
+    }
+
+    if (strlen($password) < 6) {
+        return ['success' => false, 'status' => 'validation', 'message' => 'La nuova password deve contenere almeno 6 caratteri.'];
+    }
+
+    if ($password !== $passwordConfirmation) {
+        return ['success' => false, 'status' => 'validation', 'message' => 'Le password non coincidono.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'status' => 'error', 'message' => 'Servizio momentaneamente non disponibile.'];
+    }
+
+    ensurePasswordResetsTable($pdo);
+
+    $tokenHash = hash('sha256', $normalizedToken);
+
+    try {
+        $pdo->beginTransaction();
+
+        $statement = $pdo->prepare('SELECT id, user_id, expires_at FROM password_resets WHERE token_hash = :token_hash LIMIT 1 FOR UPDATE');
+        $statement->execute(['token_hash' => $tokenHash]);
+        $row = $statement->fetch();
+
+        if (!$row) {
+            $pdo->rollBack();
+            return ['success' => false, 'status' => 'invalid', 'message' => 'Link di reimpostazione non valido o già utilizzato.'];
+        }
+
+        try {
+            $expiresAt = new DateTimeImmutable((string) $row['expires_at']);
+        } catch (Throwable $exception) {
+            $expiresAt = new DateTimeImmutable('-1 minute');
+        }
+
+        if ($expiresAt < new DateTimeImmutable()) {
+            $deleteExpired = $pdo->prepare('DELETE FROM password_resets WHERE id = :id');
+            $deleteExpired->execute(['id' => (int) $row['id']]);
+            $pdo->commit();
+
+            return ['success' => false, 'status' => 'expired', 'message' => 'Il link di reimpostazione è scaduto. Richiedi una nuova email.'];
+        }
+
+        $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+
+        $updatePassword = $pdo->prepare('UPDATE users SET password_hash = :password_hash, updated_at = NOW() WHERE id = :user_id');
+        $updatePassword->execute([
+            'password_hash' => $passwordHash,
+            'user_id' => (int) $row['user_id'],
+        ]);
+
+        $deleteToken = $pdo->prepare('DELETE FROM password_resets WHERE id = :id');
+        $deleteToken->execute(['id' => (int) $row['id']]);
+
+        $pdo->commit();
+
+        return ['success' => true, 'status' => 'ok'];
+    } catch (Throwable $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[BianconeriHub] Unable to complete password reset: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'status' => 'error', 'message' => 'Impossibile aggiornare la password in questo momento.'];
 }
 
 function attemptLogin(string $username, string $password): array
@@ -2476,9 +3514,12 @@ function attemptLogin(string $username, string $password): array
     $_SESSION['bh_current_user'] = [
         'id' => $user['id'],
         'username' => $user['username'],
+        'first_name' => $user['first_name'] ?? null,
+        'last_name' => $user['last_name'] ?? null,
         'email' => $user['email'],
         'badge' => $user['badge'] ?? 'Tifoso',
         'avatar_url' => $user['avatar_url'] ?? null,
+        'display_name' => $user['display_name'] ?? buildUserDisplayName($user['first_name'] ?? null, $user['last_name'] ?? null, (string) ($user['username'] ?? '')),
         'login_time' => time(),
     ];
 
@@ -3537,7 +4578,7 @@ function getUsersByUsernames(array $usernames): array
     $placeholders = implode(',', array_fill(0, count($unique), '?'));
 
     try {
-        $statement = $pdo->prepare('SELECT id, username, badge FROM users WHERE LOWER(username) IN (' . $placeholders . ')');
+    $statement = $pdo->prepare('SELECT id, username, badge, first_name, last_name FROM users WHERE LOWER(username) IN (' . $placeholders . ')');
         $statement->execute(array_keys($unique));
 
         $map = [];
@@ -3551,6 +4592,9 @@ function getUsersByUsernames(array $usernames): array
                 'id' => (int) ($row['id'] ?? 0),
                 'username' => $username,
                 'badge' => $row['badge'] ?? 'Tifoso',
+                'first_name' => isset($row['first_name']) ? (string) $row['first_name'] : null,
+                'last_name' => isset($row['last_name']) ? (string) $row['last_name'] : null,
+                'display_name' => buildUserDisplayName($row['first_name'] ?? null, $row['last_name'] ?? null, $username),
             ];
         }
 
@@ -3635,7 +4679,7 @@ function getCommunityPostForEditing(int $postId, int $userId): ?array
     }
 
     try {
-    $statement = $pdo->prepare('SELECT id, user_id, content, content_type, poll_question, poll_options, story_title, story_caption, story_credit, status, scheduled_for, published_at, media_url FROM community_posts WHERE id = :id AND user_id = :user_id LIMIT 1');
+    $statement = $pdo->prepare('SELECT id, user_id, content, content_type, poll_question, poll_options, story_title, story_caption, story_credit, shared_news_id, shared_news_title, shared_news_slug, shared_news_excerpt, shared_news_tag, shared_news_image, shared_news_source_url, shared_news_published_at, status, scheduled_for, published_at, media_url FROM community_posts WHERE id = :id AND user_id = :user_id LIMIT 1');
         $statement->execute([
             'id' => $postId,
             'user_id' => $userId,
@@ -3675,6 +4719,14 @@ function getCommunityPostForEditing(int $postId, int $userId): ?array
             'story_title' => $row['story_title'] ?? '',
             'story_caption' => $row['story_caption'] ?? '',
             'story_credit' => $row['story_credit'] ?? '',
+            'shared_news_id' => isset($row['shared_news_id']) ? (int) $row['shared_news_id'] : 0,
+            'shared_news_title' => $row['shared_news_title'] ?? '',
+            'shared_news_slug' => $row['shared_news_slug'] ?? '',
+            'shared_news_excerpt' => $row['shared_news_excerpt'] ?? '',
+            'shared_news_tag' => $row['shared_news_tag'] ?? '',
+            'shared_news_image' => $row['shared_news_image'] ?? '',
+            'shared_news_source_url' => $row['shared_news_source_url'] ?? '',
+            'shared_news_published_at' => $row['shared_news_published_at'] ?? null,
             'status' => $row['status'] ?? 'draft',
             'scheduled_for' => $row['scheduled_for'] ?? null,
             'published_at' => $row['published_at'] ?? null,
@@ -3708,6 +4760,8 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
     $currentUserId = isset($currentUser['id']) ? (int) $currentUser['id'] : 0;
 
     $authorColumns = 'u.username,
+                    u.first_name,
+                    u.last_name,
                     u.badge,
                     u.avatar_url AS author_avatar_url';
     if ($userProfilesAvailable) {
@@ -3729,7 +4783,15 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
             p.poll_options,
             p.story_title,
             p.story_caption,
-            p.story_credit,
+        p.story_credit,
+        p.shared_news_id,
+        p.shared_news_title,
+        p.shared_news_slug,
+        p.shared_news_excerpt,
+        p.shared_news_tag,
+        p.shared_news_image,
+        p.shared_news_source_url,
+        p.shared_news_published_at,
             p.created_at,
             p.published_at,
             p.status,
@@ -3824,6 +4886,10 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                 'id' => (int) ($row['id'] ?? 0),
                 'user_id' => $authorId,
                 'author' => $row['username'] ?? 'Tifoso',
+                'author_username' => isset($row['username']) ? (string) $row['username'] : '',
+                'author_first_name' => isset($row['first_name']) ? (string) $row['first_name'] : null,
+                'author_last_name' => isset($row['last_name']) ? (string) $row['last_name'] : null,
+                'author_display_name' => buildUserDisplayName($row['first_name'] ?? null, $row['last_name'] ?? null, (string) ($row['username'] ?? 'Tifoso')),
                 'badge' => $row['badge'] ?? 'Tifoso',
                 'content' => $row['content'] ?? '',
                 'content_type' => $row['content_type'] ?? 'text',
@@ -3833,6 +4899,14 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                 'story_title' => $extendedSchema ? ($row['story_title'] ?? '') : '',
                 'story_caption' => $extendedSchema ? ($row['story_caption'] ?? '') : '',
                 'story_credit' => $extendedSchema ? ($row['story_credit'] ?? '') : '',
+                'shared_news_id' => $extendedSchema ? (int) ($row['shared_news_id'] ?? 0) : 0,
+                'shared_news_title' => $extendedSchema ? ($row['shared_news_title'] ?? '') : '',
+                'shared_news_slug' => $extendedSchema ? ($row['shared_news_slug'] ?? '') : '',
+                'shared_news_excerpt' => $extendedSchema ? ($row['shared_news_excerpt'] ?? '') : '',
+                'shared_news_tag' => $extendedSchema ? ($row['shared_news_tag'] ?? '') : '',
+                'shared_news_image' => $extendedSchema ? ($row['shared_news_image'] ?? '') : '',
+                'shared_news_source_url' => $extendedSchema ? ($row['shared_news_source_url'] ?? '') : '',
+                'shared_news_published_at' => $extendedSchema ? ($row['shared_news_published_at'] ?? null) : null,
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
                 'published_at' => $extendedSchema
                     ? normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time()))
@@ -3935,6 +5009,21 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
             $post['media'] = $postMedia;
             $post['content_rendered'] = $contentRender['html'];
             $post['mentions'] = $contentRender['mentions'];
+
+            if ($post['content_type'] === 'news') {
+                $post['shared_news'] = [
+                    'id' => isset($post['shared_news_id']) ? (int) $post['shared_news_id'] : 0,
+                    'title' => trim((string) ($post['shared_news_title'] ?? '')),
+                    'slug' => trim((string) ($post['shared_news_slug'] ?? '')),
+                    'excerpt' => trim((string) ($post['shared_news_excerpt'] ?? '')),
+                    'tag' => trim((string) ($post['shared_news_tag'] ?? '')),
+                    'image' => trim((string) ($post['shared_news_image'] ?? '')),
+                    'source_url' => trim((string) ($post['shared_news_source_url'] ?? '')),
+                    'published_at' => $post['shared_news_published_at'] ?? null,
+                ];
+            } else {
+                $post['shared_news'] = null;
+            }
 
             $posts[] = $post;
         }
@@ -4236,7 +5325,7 @@ function getCommunityComments(int $postId, int $limit = 20, int $viewerId = 0): 
     try {
         $reactionsAvailable = communityCommentReactionsTableAvailable($pdo);
 
-        $selectFields = 'c.id, c.parent_comment_id, c.content, c.created_at, c.updated_at, c.post_id, c.user_id, u.username, u.badge';
+    $selectFields = 'c.id, c.parent_comment_id, c.content, c.created_at, c.updated_at, c.post_id, c.user_id, u.username, u.first_name, u.last_name, u.badge';
         if ($reactionsAvailable) {
             $selectFields .= ', COALESCE(l.likes_count, 0) AS likes_count';
             if ($viewerId > 0) {
@@ -4292,7 +5381,10 @@ function getCommunityComments(int $postId, int $limit = 20, int $viewerId = 0): 
                 'id' => $commentId,
                 'post_id' => (int) ($row['post_id'] ?? $postId),
                 'parent_id' => $parentId > 0 ? $parentId : null,
-                'author' => $row['username'] ?? 'Tifoso',
+                'author' => buildUserDisplayName($row['first_name'] ?? null, $row['last_name'] ?? null, (string) ($row['username'] ?? 'Tifoso')),
+                'author_username' => isset($row['username']) ? (string) $row['username'] : '',
+                'author_first_name' => isset($row['first_name']) ? (string) $row['first_name'] : null,
+                'author_last_name' => isset($row['last_name']) ? (string) $row['last_name'] : null,
                 'badge' => $row['badge'] ?? 'Tifoso',
                 'content' => $row['content'] ?? '',
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
@@ -4662,7 +5754,7 @@ function communityPostsExtendedSchemaAvailable(?PDO $connection = null): bool
     }
 
     try {
-    $pdo->query('SELECT status, poll_question, poll_options, story_title, story_caption, story_credit, scheduled_for, published_at FROM community_posts LIMIT 1');
+        $pdo->query('SELECT status, poll_question, poll_options, story_title, story_caption, story_credit, scheduled_for, published_at, shared_news_id, shared_news_title, shared_news_slug, shared_news_excerpt, shared_news_tag, shared_news_image, shared_news_source_url, shared_news_published_at FROM community_posts LIMIT 1');
         $cache = true;
     } catch (PDOException $exception) {
         $sqlState = $exception->getCode();
@@ -4848,6 +5940,200 @@ function markCommunityMentionsAsNotified(PDO $pdo, array $mentionIds): void
     }
 }
 
+function getCommunityMentionsSummary(int $userId, int $limit = 5, int $offset = 0): array
+{
+    $summary = [
+        'items' => [],
+        'total' => 0,
+        'unread_count' => 0,
+        'has_more' => false,
+        'limit' => max(1, (int) $limit),
+        'offset' => max(0, (int) $offset),
+        'timestamp' => time(),
+    ];
+
+    $userId = (int) $userId;
+    if ($userId <= 0) {
+        return $summary;
+    }
+
+    $summary['limit'] = max(1, min($summary['limit'], 25));
+    $summary['offset'] = max(0, $summary['offset']);
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo || !communityPostMentionsTableAvailable($pdo)) {
+        return $summary;
+    }
+
+    try {
+        $countStatement = $pdo->prepare(
+            'SELECT COUNT(*) AS total_mentions,
+                    SUM(CASE WHEN viewed_at IS NULL THEN 1 ELSE 0 END) AS unread_mentions
+             FROM community_post_mentions
+             WHERE mentioned_user_id = :user_id'
+        );
+        $countStatement->execute(['user_id' => $userId]);
+        $counts = $countStatement->fetch();
+        $summary['total'] = (int) ($counts['total_mentions'] ?? 0);
+        $summary['unread_count'] = (int) ($counts['unread_mentions'] ?? 0);
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to count community mentions: ' . $exception->getMessage());
+        return $summary;
+    }
+
+    if ($summary['total'] === 0) {
+        return $summary;
+    }
+
+    $fetchLimit = $summary['limit'] + 1;
+    $offset = $summary['offset'];
+
+    $sql = <<<SQL
+SELECT
+    m.id,
+    m.post_id,
+    m.author_id,
+    m.created_at,
+    m.viewed_at,
+    p.content,
+    p.content_type,
+    p.created_at AS post_created_at,
+    u.username AS author_username,
+    u.first_name,
+    u.last_name,
+    u.badge,
+    u.avatar_url
+FROM community_post_mentions m
+INNER JOIN community_posts p ON p.id = m.post_id
+INNER JOIN users u ON u.id = m.author_id
+WHERE m.mentioned_user_id = :user_id
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $fetchLimit OFFSET $offset
+SQL;
+
+    try {
+        $statement = $pdo->prepare($sql);
+        $statement->execute(['user_id' => $userId]);
+        $rows = $statement->fetchAll();
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community mentions: ' . $exception->getMessage());
+        return $summary;
+    }
+
+    if (!is_array($rows) || empty($rows)) {
+        return $summary;
+    }
+
+    $summary['has_more'] = count($rows) > $summary['limit'];
+    if ($summary['has_more']) {
+        $rows = array_slice($rows, 0, $summary['limit']);
+    }
+
+    $items = [];
+
+    foreach ($rows as $row) {
+        $mentionId = (int) ($row['id'] ?? 0);
+        $postId = (int) ($row['post_id'] ?? 0);
+        $authorId = (int) ($row['author_id'] ?? 0);
+
+        if ($mentionId <= 0 || $postId <= 0 || $authorId <= 0) {
+            continue;
+        }
+
+        $authorUsername = trim((string) ($row['author_username'] ?? ''));
+        $authorDisplay = buildUserDisplayName($row['first_name'] ?? null, $row['last_name'] ?? null, $authorUsername);
+
+        $content = (string) ($row['content'] ?? '');
+        $excerpt = sanitizeFeedExcerpt($content, 160);
+        if ($excerpt === '') {
+            $excerpt = 'Ti ha menzionato in un post della community.';
+        }
+
+        $createdAt = normalizeToTimestamp($row['created_at'] ?? time());
+
+        $items[] = [
+            'id' => $mentionId,
+            'post_id' => $postId,
+            'permalink' => '?page=community#post-' . $postId,
+            'author_username' => $authorUsername,
+            'author_display_name' => $authorDisplay !== '' ? $authorDisplay : ($authorUsername !== '' ? $authorUsername : 'Membro'),
+            'author_badge' => $row['badge'] ?? 'Tifoso',
+            'author_avatar_url' => trim((string) ($row['avatar_url'] ?? '')),
+            'excerpt' => $excerpt,
+            'content_type' => $row['content_type'] ?? 'text',
+            'created_at' => $createdAt,
+            'created_human' => getHumanTimeDiff($createdAt),
+            'is_unread' => empty($row['viewed_at']),
+        ];
+    }
+
+    $summary['items'] = $items;
+
+    return $summary;
+}
+
+function markCommunityMentionsAsViewed(int $userId, ?array $mentionIds = null): int
+{
+    $userId = (int) $userId;
+    if ($userId <= 0) {
+        return 0;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo || !communityPostMentionsTableAvailable($pdo)) {
+        return 0;
+    }
+
+    if (is_array($mentionIds) && !empty($mentionIds)) {
+        $uniqueIds = [];
+        foreach ($mentionIds as $mentionId) {
+            $intId = (int) $mentionId;
+            if ($intId > 0) {
+                $uniqueIds[$intId] = $intId;
+            }
+        }
+
+        if (empty($uniqueIds)) {
+            return 0;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($uniqueIds), '?'));
+        $params = array_values($uniqueIds);
+        $params[] = $userId;
+
+        try {
+            $statement = $pdo->prepare(
+                'UPDATE community_post_mentions
+                 SET viewed_at = NOW()
+                 WHERE id IN (' . $placeholders . ')
+                   AND mentioned_user_id = ?
+                   AND viewed_at IS NULL'
+            );
+            $statement->execute($params);
+
+            return (int) $statement->rowCount();
+        } catch (PDOException $exception) {
+            error_log('[BianconeriHub] Failed to mark specific mentions as viewed: ' . $exception->getMessage());
+            return 0;
+        }
+    }
+
+    try {
+        $statement = $pdo->prepare(
+            'UPDATE community_post_mentions
+             SET viewed_at = NOW()
+             WHERE mentioned_user_id = :user_id AND viewed_at IS NULL'
+        );
+        $statement->execute(['user_id' => $userId]);
+
+        return (int) $statement->rowCount();
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to mark mentions as viewed: ' . $exception->getMessage());
+    }
+
+    return 0;
+}
+
 function getCommunityPollVoteSnapshot(array $postIds, int $viewerId = 0): array
 {
     $uniqueIds = [];
@@ -4955,7 +6241,7 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
 
     $message = trim((string) ($input['message'] ?? ''));
     $mode = strtolower((string) ($input['composer_mode'] ?? 'text'));
-    $allowedModes = ['text', 'photo', 'poll', 'story'];
+    $allowedModes = ['text', 'photo', 'poll', 'story', 'news'];
     if (!in_array($mode, $allowedModes, true)) {
         $mode = 'text';
     }
@@ -4990,6 +6276,19 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
             $pollOptions[] = mb_substr($optionText, 0, 120);
         }
     }
+
+    $sharedNewsId = isset($input['shared_news_id']) ? (int) $input['shared_news_id'] : 0;
+    $sharedNewsSlugInput = trim((string) ($input['shared_news_slug'] ?? ''));
+    $sharedNewsMeta = [
+        'id' => 0,
+        'title' => '',
+        'slug' => '',
+        'excerpt' => '',
+        'tag' => '',
+        'image' => '',
+        'source_url' => '',
+        'published_at' => null,
+    ];
 
     $mentionedUserIds = [];
     if ($message !== '') {
@@ -5057,6 +6356,10 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         if ($mode === 'story') {
             return ['success' => false, 'message' => 'Le storie richiedono un aggiornamento del database.'];
         }
+
+        if ($mode === 'news') {
+            return ['success' => false, 'message' => 'La condivisione delle news richiede un aggiornamento del database.'];
+        }
     }
 
     $mediaTableAvailable = communityMediaTableAvailable($pdo);
@@ -5107,6 +6410,67 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
     } else {
         $pollQuestion = '';
         $pollOptions = [];
+    }
+
+    if ($mode === 'news') {
+        $selectedNews = null;
+
+        if ($sharedNewsId > 0) {
+            $selectedNews = findNewsItemById($sharedNewsId);
+        }
+
+        if (!$selectedNews && $sharedNewsSlugInput !== '') {
+            $selectedNews = findNewsItemBySlug($sharedNewsSlugInput);
+        }
+
+        if (!$selectedNews) {
+            return ['success' => false, 'message' => 'Seleziona una notizia valida da condividere.'];
+        }
+
+        $sharedNewsMeta['id'] = (int) ($selectedNews['id'] ?? 0);
+        if ($sharedNewsMeta['id'] <= 0) {
+            return ['success' => false, 'message' => 'La notizia selezionata non è più disponibile.'];
+        }
+
+        $sharedNewsMeta['title'] = mb_substr(trim((string) ($selectedNews['title'] ?? '')), 0, 255);
+        $sharedNewsMeta['slug'] = mb_substr(trim((string) ($selectedNews['slug'] ?? '')), 0, 255);
+        $sharedNewsMeta['excerpt'] = mb_substr(trim(strip_tags((string) ($selectedNews['excerpt'] ?? ''))), 0, 400);
+        if ($sharedNewsMeta['excerpt'] === '' && !empty($selectedNews['body'])) {
+            $sharedNewsMeta['excerpt'] = mb_substr(trim(strip_tags((string) $selectedNews['body'])), 0, 400);
+        }
+        $sharedNewsMeta['tag'] = mb_substr(trim((string) ($selectedNews['tag'] ?? '')), 0, 120);
+        $sharedNewsMeta['image'] = mb_substr(trim((string) ($selectedNews['image'] ?? ($selectedNews['image_path'] ?? ''))), 0, 255);
+        $sharedNewsMeta['source_url'] = mb_substr(trim((string) ($selectedNews['source_url'] ?? '')), 0, 255);
+
+        if ($sharedNewsMeta['title'] === '') {
+            return ['success' => false, 'message' => 'La notizia selezionata non è più disponibile.'];
+        }
+
+        $newsPublishedRaw = $selectedNews['published_at'] ?? null;
+        if ($newsPublishedRaw !== null && $newsPublishedRaw !== '') {
+            try {
+                $newsPublished = new DateTime($newsPublishedRaw);
+                $sharedNewsMeta['published_at'] = $newsPublished->format('Y-m-d H:i:s');
+            } catch (\Exception $exception) {
+                $sharedNewsMeta['published_at'] = null;
+            }
+        } else {
+            $sharedNewsMeta['published_at'] = null;
+        }
+
+        $sharedNewsId = $sharedNewsMeta['id'];
+    } else {
+        $sharedNewsId = 0;
+        $sharedNewsMeta = [
+            'id' => 0,
+            'title' => '',
+            'slug' => '',
+            'excerpt' => '',
+            'tag' => '',
+            'image' => '',
+            'source_url' => '',
+            'published_at' => null,
+        ];
     }
 
     $scheduleDate = null;
@@ -5303,7 +6667,7 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
 
         if ($isUpdating) {
             if ($extendedSchema) {
-                $update = $pdo->prepare('UPDATE community_posts SET content = :content, content_type = :content_type, poll_question = :poll_question, poll_options = :poll_options, story_title = :story_title, story_caption = :story_caption, story_credit = :story_credit, status = :status, scheduled_for = :scheduled_for, published_at = :published_at, updated_at = NOW() WHERE id = :id AND user_id = :user_id');
+                $update = $pdo->prepare('UPDATE community_posts SET content = :content, content_type = :content_type, poll_question = :poll_question, poll_options = :poll_options, story_title = :story_title, story_caption = :story_caption, story_credit = :story_credit, shared_news_id = :shared_news_id, shared_news_title = :shared_news_title, shared_news_slug = :shared_news_slug, shared_news_excerpt = :shared_news_excerpt, shared_news_tag = :shared_news_tag, shared_news_image = :shared_news_image, shared_news_source_url = :shared_news_source_url, shared_news_published_at = :shared_news_published_at, status = :status, scheduled_for = :scheduled_for, published_at = :published_at, updated_at = NOW() WHERE id = :id AND user_id = :user_id');
                 $update->execute([
                     'content' => $message,
                     'content_type' => $finalContentType,
@@ -5312,6 +6676,14 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
                     'story_title' => $storyTitle !== '' ? $storyTitle : null,
                     'story_caption' => $storyCaption !== '' ? $storyCaption : null,
                     'story_credit' => $storyCredit !== '' ? $storyCredit : null,
+                    'shared_news_id' => $sharedNewsMeta['id'] > 0 ? $sharedNewsMeta['id'] : null,
+                    'shared_news_title' => $sharedNewsMeta['title'] !== '' ? $sharedNewsMeta['title'] : null,
+                    'shared_news_slug' => $sharedNewsMeta['slug'] !== '' ? $sharedNewsMeta['slug'] : null,
+                    'shared_news_excerpt' => $sharedNewsMeta['excerpt'] !== '' ? $sharedNewsMeta['excerpt'] : null,
+                    'shared_news_tag' => $sharedNewsMeta['tag'] !== '' ? $sharedNewsMeta['tag'] : null,
+                    'shared_news_image' => $sharedNewsMeta['image'] !== '' ? $sharedNewsMeta['image'] : null,
+                    'shared_news_source_url' => $sharedNewsMeta['source_url'] !== '' ? $sharedNewsMeta['source_url'] : null,
+                    'shared_news_published_at' => $sharedNewsMeta['published_at'],
                     'status' => $status,
                     'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
                     'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
@@ -5331,7 +6703,7 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
             $postId = $existingPost['id'];
         } else {
             if ($extendedSchema) {
-                $insert = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, poll_question, poll_options, story_title, story_caption, story_credit, status, scheduled_for, published_at) VALUES (:user_id, :content, :content_type, :poll_question, :poll_options, :story_title, :story_caption, :story_credit, :status, :scheduled_for, :published_at)');
+                $insert = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, poll_question, poll_options, story_title, story_caption, story_credit, shared_news_id, shared_news_title, shared_news_slug, shared_news_excerpt, shared_news_tag, shared_news_image, shared_news_source_url, shared_news_published_at, status, scheduled_for, published_at) VALUES (:user_id, :content, :content_type, :poll_question, :poll_options, :story_title, :story_caption, :story_credit, :shared_news_id, :shared_news_title, :shared_news_slug, :shared_news_excerpt, :shared_news_tag, :shared_news_image, :shared_news_source_url, :shared_news_published_at, :status, :scheduled_for, :published_at)');
                 $insert->execute([
                     'user_id' => $userId,
                     'content' => $message,
@@ -5341,6 +6713,14 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
                     'story_title' => $storyTitle !== '' ? $storyTitle : null,
                     'story_caption' => $storyCaption !== '' ? $storyCaption : null,
                     'story_credit' => $storyCredit !== '' ? $storyCredit : null,
+                    'shared_news_id' => $sharedNewsMeta['id'] > 0 ? $sharedNewsMeta['id'] : null,
+                    'shared_news_title' => $sharedNewsMeta['title'] !== '' ? $sharedNewsMeta['title'] : null,
+                    'shared_news_slug' => $sharedNewsMeta['slug'] !== '' ? $sharedNewsMeta['slug'] : null,
+                    'shared_news_excerpt' => $sharedNewsMeta['excerpt'] !== '' ? $sharedNewsMeta['excerpt'] : null,
+                    'shared_news_tag' => $sharedNewsMeta['tag'] !== '' ? $sharedNewsMeta['tag'] : null,
+                    'shared_news_image' => $sharedNewsMeta['image'] !== '' ? $sharedNewsMeta['image'] : null,
+                    'shared_news_source_url' => $sharedNewsMeta['source_url'] !== '' ? $sharedNewsMeta['source_url'] : null,
+                    'shared_news_published_at' => $sharedNewsMeta['published_at'],
                     'status' => $status,
                     'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
                     'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
@@ -5500,6 +6880,7 @@ function findMatchById(int $matchId): ?array
 
 function findNewsItemBySlug(string $slug): ?array
 {
+    triggerPeriodicNewsSync();
     syncNewsFeed();
 
     $pdo = getDatabaseConnection();
@@ -5576,7 +6957,7 @@ function getNewsComments(int $newsId): array
     }
 
     try {
-        $statement = $pdo->prepare('SELECT c.id, c.content, c.created_at, u.username, u.badge FROM news_comments c INNER JOIN users u ON u.id = c.user_id WHERE c.news_id = :news_id ORDER BY c.created_at DESC');
+    $statement = $pdo->prepare('SELECT c.id, c.content, c.created_at, u.username, u.first_name, u.last_name, u.badge, u.avatar_url FROM news_comments c INNER JOIN users u ON u.id = c.user_id WHERE c.news_id = :news_id ORDER BY c.created_at DESC');
         $statement->execute(['news_id' => $newsId]);
 
         $comments = [];
@@ -5586,7 +6967,11 @@ function getNewsComments(int $newsId): array
                 'content' => $row['content'] ?? '',
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
                 'username' => $row['username'] ?? 'Tifoso',
+                'display_name' => buildUserDisplayName($row['first_name'] ?? null, $row['last_name'] ?? null, (string) ($row['username'] ?? 'Tifoso')),
+                'first_name' => isset($row['first_name']) ? (string) $row['first_name'] : null,
+                'last_name' => isset($row['last_name']) ? (string) $row['last_name'] : null,
                 'badge' => $row['badge'] ?? 'Tifoso',
+                'avatar_url' => trim((string) ($row['avatar_url'] ?? '')),
             ];
         }
 

@@ -16,6 +16,7 @@ USE `u427445037_bianconerihub`;
 -- ---------------------------------------------------------------------------
 -- Table: users
 -- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `password_resets`;
 DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -23,12 +24,29 @@ CREATE TABLE `users` (
     `email` VARCHAR(255) NOT NULL,
     `password_hash` VARCHAR(255) NOT NULL,
     `badge` VARCHAR(60) DEFAULT 'Tifoso',
+    `first_name` VARCHAR(80) DEFAULT NULL,
+    `last_name` VARCHAR(80) DEFAULT NULL,
     `avatar_url` VARCHAR(255) DEFAULT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `users_username_unique` (`username`),
     UNIQUE KEY `users_email_unique` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `password_resets` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `user_id` INT UNSIGNED NOT NULL,
+    `token_hash` CHAR(64) NOT NULL,
+    `expires_at` DATETIME NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `password_resets_token_hash_unique` (`token_hash`),
+    KEY `password_resets_user_id_foreign` (`user_id`),
+    KEY `password_resets_expires_at_index` (`expires_at`),
+    CONSTRAINT `password_resets_user_id_foreign`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
@@ -50,21 +68,28 @@ CREATE TABLE `news` (
     UNIQUE KEY `news_slug_unique` (`slug`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ---------------------------------------------------------------------------
--- Table: matches
--- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS `matches`;
 CREATE TABLE `matches` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `external_id` VARCHAR(50) DEFAULT NULL,
+    `source` VARCHAR(40) DEFAULT NULL,
     `competition` VARCHAR(80) NOT NULL,
     `opponent` VARCHAR(120) NOT NULL,
+    `home_team` VARCHAR(120) DEFAULT NULL,
+    `away_team` VARCHAR(120) DEFAULT NULL,
+    `juventus_is_home` TINYINT(1) DEFAULT NULL,
     `venue` VARCHAR(120) DEFAULT NULL,
     `kickoff_at` DATETIME NOT NULL,
     `status` VARCHAR(80) DEFAULT NULL,
+    `status_code` VARCHAR(40) DEFAULT NULL,
+    `home_score` TINYINT UNSIGNED DEFAULT NULL,
+    `away_score` TINYINT UNSIGNED DEFAULT NULL,
     `broadcast` VARCHAR(120) DEFAULT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`)
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `matches_external_id_unique` (`external_id`),
+    KEY `matches_source_index` (`source`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------

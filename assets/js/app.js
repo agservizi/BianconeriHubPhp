@@ -522,6 +522,286 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    const initNavigationMentions = () => {
+        const containers = document.querySelectorAll('[data-nav-mentions]');
+        if (containers.length === 0) {
+            return;
+        }
+
+        const escapeHtml = (value) => {
+            if (value === null || value === undefined) {
+                return '';
+            }
+
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        };
+
+        containers.forEach((container) => {
+            const toggle = container.querySelector('[data-nav-mentions-toggle]');
+            const panel = container.querySelector('[data-nav-mentions-panel]');
+            const countBadge = container.querySelector('[data-nav-mentions-count]');
+            const list = container.querySelector('[data-nav-mentions-list]');
+            const emptyState = container.querySelector('[data-nav-mentions-empty]');
+            const loadingState = container.querySelector('[data-nav-mentions-loading]');
+            const errorState = container.querySelector('[data-nav-mentions-error]');
+            const moreLink = container.querySelector('[data-nav-mentions-more]');
+
+            if (!toggle || !panel) {
+                return;
+            }
+
+            const endpoint = toggle.dataset.navMentionsEndpoint || '';
+            const rawLimit = parseInt(toggle.dataset.navMentionsLimit || '5', 10);
+            const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? rawLimit : 5;
+            const token = toggle.dataset.navMentionsToken || '';
+
+            let isOpen = false;
+            let isFetching = false;
+            let hasLoaded = false;
+
+            const getBadgeCount = () => {
+                if (!countBadge) {
+                    return 0;
+                }
+
+                const rawValue = parseInt(countBadge.getAttribute('data-nav-mentions-count-value') || '0', 10);
+                return Number.isNaN(rawValue) ? 0 : rawValue;
+            };
+
+            const setBadgeCount = (value) => {
+                if (!countBadge) {
+                    return;
+                }
+
+                const numericValue = Number.isFinite(value) ? value : 0;
+                countBadge.setAttribute('data-nav-mentions-count-value', String(Math.max(0, numericValue)));
+
+                if (numericValue <= 0) {
+                    countBadge.classList.add('hidden');
+                    countBadge.textContent = '';
+                    return;
+                }
+
+                const label = numericValue > 99 ? '99+' : (numericValue > 9 ? '9+' : String(Math.max(1, Math.trunc(numericValue))));
+                countBadge.textContent = label;
+                countBadge.classList.remove('hidden');
+            };
+
+            const renderMentions = (items, hasMore) => {
+                if (loadingState) {
+                    loadingState.classList.add('hidden');
+                }
+
+                if (!Array.isArray(items) || items.length === 0) {
+                    if (list) {
+                        list.innerHTML = '';
+                        list.classList.add('hidden');
+                    }
+
+                    if (emptyState) {
+                        emptyState.classList.remove('hidden');
+                    }
+
+                    if (moreLink) {
+                        moreLink.classList.add('hidden');
+                    }
+
+                    return;
+                }
+
+                const markup = items.map((item) => {
+                    const permalink = escapeHtml(item.permalink || '?page=community');
+                    const displayNameRaw = typeof item.author_display_name === 'string' ? item.author_display_name.trim() : '';
+                    const usernameRaw = typeof item.author_username === 'string' ? item.author_username.trim() : '';
+                    const displayName = displayNameRaw !== '' ? displayNameRaw : (usernameRaw !== '' ? usernameRaw : 'Tifoso');
+                    const createdHuman = escapeHtml(item.created_human || '');
+                    const excerpt = escapeHtml(item.excerpt || '');
+                    const avatarUrl = typeof item.author_avatar_url === 'string' ? item.author_avatar_url.trim() : '';
+                    const initialsSource = displayNameRaw !== '' ? displayNameRaw : (usernameRaw !== '' ? usernameRaw : 'BH');
+                    const initials = escapeHtml(initialsSource.toUpperCase().slice(0, 2));
+                    const handleHtml = usernameRaw !== ''
+                        ? `<span class="text-[0.65rem] uppercase tracking-wide text-gray-500">@${escapeHtml(usernameRaw)}</span>`
+                        : '';
+                    const unread = Boolean(item.is_unread);
+                    const containerClasses = unread ? 'border-white/40 bg-white/10' : 'border-white/10 bg-black/40';
+
+                    const avatarHtml = avatarUrl !== ''
+                        ? `<img src="${escapeHtml(avatarUrl)}" alt="" class="h-full w-full object-cover">`
+                        : `<span class="flex h-full w-full items-center justify-center">${initials}</span>`;
+
+                    return `
+                        <li>
+                            <a href="${permalink}" class="flex items-start gap-3 rounded-xl border ${containerClasses} px-3 py-2 transition-all hover:border-white/50 hover:bg-white/15" data-nav-mentions-item>
+                                <span class="flex h-9 w-9 overflow-hidden rounded-full border border-white/15 bg-white/10 text-xs font-semibold text-white">
+                                    ${avatarHtml}
+                                </span>
+                                <span class="flex-1 space-y-1">
+                                    <span class="flex items-center justify-between gap-2">
+                                        <span class="text-sm font-semibold text-white">${escapeHtml(displayName)}</span>
+                                        <span class="text-[0.65rem] uppercase tracking-wide text-gray-400">${createdHuman}</span>
+                                    </span>
+                                    ${handleHtml}
+                                    <span class="block text-xs text-gray-300 leading-snug">${excerpt}</span>
+                                </span>
+                            </a>
+                        </li>
+                    `;
+                }).join('');
+
+                if (list) {
+                    list.innerHTML = markup;
+                    list.classList.remove('hidden');
+                }
+
+                if (emptyState) {
+                    emptyState.classList.add('hidden');
+                }
+
+                if (moreLink) {
+                    moreLink.classList.toggle('hidden', !hasMore);
+                }
+            };
+
+            const setLoadingState = (isLoading) => {
+                if (!loadingState) {
+                    return;
+                }
+
+                loadingState.classList.toggle('hidden', !isLoading);
+            };
+
+            const fetchMentions = (markViewed = false) => {
+                if (!endpoint || isFetching) {
+                    return;
+                }
+
+                isFetching = true;
+
+                if (errorState) {
+                    errorState.classList.add('hidden');
+                    errorState.textContent = '';
+                }
+
+                setLoadingState(true);
+
+                const payload = {
+                    action: 'fetch',
+                    limit,
+                    mark_viewed: Boolean(markViewed),
+                    _token: token,
+                };
+
+                fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(payload),
+                })
+                    .then((response) => {
+                        if (!response.ok) {
+                            throw new Error(`Request failed with status ${response.status}`);
+                        }
+
+                        return response.json();
+                    })
+                    .then((data) => {
+                        if (!data || data.success !== true) {
+                            throw new Error(data && data.message ? data.message : 'Unexpected response payload');
+                        }
+
+                        renderMentions(Array.isArray(data.items) ? data.items : [], Boolean(data.has_more));
+
+                        if (typeof data.unread_count === 'number') {
+                            setBadgeCount(data.unread_count);
+                        }
+
+                        hasLoaded = true;
+                    })
+                    .catch((error) => {
+                        if (errorState) {
+                            errorState.textContent = 'Impossibile caricare le menzioni.';
+                            errorState.classList.remove('hidden');
+                        }
+
+                        // eslint-disable-next-line no-console
+                        console.error('Navigation mention fetch failed:', error);
+                    })
+                    .finally(() => {
+                        setLoadingState(false);
+                        isFetching = false;
+                    });
+            };
+
+            const closePanel = () => {
+                if (!isOpen) {
+                    return;
+                }
+
+                panel.classList.add('hidden');
+                toggle.setAttribute('aria-expanded', 'false');
+                isOpen = false;
+                document.removeEventListener('click', handleDocumentClick, true);
+                document.removeEventListener('keydown', handleDocumentKeyDown, true);
+            };
+
+            const handleDocumentClick = (event) => {
+                if (!container.contains(event.target)) {
+                    closePanel();
+                }
+            };
+
+            const handleDocumentKeyDown = (event) => {
+                if (event.key === 'Escape') {
+                    closePanel();
+                }
+            };
+
+            const openPanel = () => {
+                if (isOpen) {
+                    return;
+                }
+
+                panel.classList.remove('hidden');
+                toggle.setAttribute('aria-expanded', 'true');
+                isOpen = true;
+
+                document.addEventListener('click', handleDocumentClick, true);
+                document.addEventListener('keydown', handleDocumentKeyDown, true);
+
+                const currentBadge = getBadgeCount();
+                if (!hasLoaded || currentBadge > 0) {
+                    fetchMentions(true);
+                }
+            };
+
+            toggle.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (isOpen) {
+                    closePanel();
+                } else {
+                    openPanel();
+                }
+            });
+
+            container.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    closePanel();
+                }
+            });
+        });
+    };
+
     const initCityAutocomplete = () => {
         const inputs = Array.from(document.querySelectorAll('[data-city-autocomplete]'));
         if (inputs.length === 0) {
@@ -741,6 +1021,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initProfileSearchInstant();
     initNavbarProfileSearch();
+    initNavigationMentions();
     initCityAutocomplete();
 
     const composer = document.querySelector('[data-community-composer]');
@@ -759,12 +1040,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const photoHint = composer.querySelector('[data-composer-photo-hint]');
         const photoClipboardField = composer.querySelector('[data-composer-photo-clipboard]');
         const photoClipboardNameField = composer.querySelector('[data-composer-photo-clipboard-name]');
-    const pollQuestionInput = composer.querySelector('[data-composer-poll-question]');
-    const pollOptionInputs = composer.querySelectorAll('[data-composer-poll-option]');
-    const storySection = composer.querySelector('[data-composer-story-section]');
-    const storyTitleInput = composer.querySelector('[data-composer-story-title]');
-    const storyCaptionInput = composer.querySelector('[data-composer-story-caption]');
-    const storyCreditInput = composer.querySelector('[data-composer-story-credit]');
+        const pollQuestionInput = composer.querySelector('[data-composer-poll-question]');
+        const pollOptionInputs = composer.querySelectorAll('[data-composer-poll-option]');
+        const storySection = composer.querySelector('[data-composer-story-section]');
+        const storyTitleInput = composer.querySelector('[data-composer-story-title]');
+        const storyCaptionInput = composer.querySelector('[data-composer-story-caption]');
+        const storyCreditInput = composer.querySelector('[data-composer-story-credit]');
+    const newsSection = composer.querySelector('[data-composer-news-section]');
+    const newsOptions = composer.querySelectorAll('[data-composer-news-option]');
+    const savedNewsIdRaw = composer.dataset.composerSelectedNews || '';
+    const savedNewsId = savedNewsIdRaw !== '' ? Number.parseInt(savedNewsIdRaw, 10) : 0;
+    let restoredNewsSelection = false;
+    const existingMediaCountRaw = composer.dataset.composerExistingMediaCount || '';
+    const parsedExistingMediaCount = existingMediaCountRaw !== '' ? Number.parseInt(existingMediaCountRaw, 10) : 0;
+    const baselineExistingAttachments = Number.isNaN(parsedExistingMediaCount) ? 0 : Math.max(parsedExistingMediaCount, 0);
         const actionButtons = composer.querySelectorAll('[data-composer-action]');
         const actionInput = composer.querySelector('[data-composer-action-input]');
         const scheduleWrapper = composer.querySelector('[data-composer-schedule-wrapper]');
@@ -785,14 +1074,15 @@ document.addEventListener('DOMContentLoaded', () => {
             draft: 'Salva bozza',
         };
 
-    const getCurrentMode = () => (modeInput ? modeInput.value : 'text');
-    const getAttachmentCount = () => composerState.files.length + (composerState.clipboard ? 1 : 0);
-    const getAttachmentLimit = () => (getCurrentMode() === 'story' ? 1 : composerMaxAttachments);
+        const getCurrentMode = () => (modeInput ? modeInput.value : 'text');
+    const getAttachmentCount = () => composerState.files.length + (composerState.clipboard ? 1 : 0) + baselineExistingAttachments;
+        const getAttachmentLimit = () => (getCurrentMode() === 'story' ? 1 : composerMaxAttachments);
 
         const basePlaceholder = textArea ? textArea.dataset.placeholderBase || textArea.placeholder : '';
         const photoPlaceholder = textArea ? textArea.dataset.placeholderPhoto || basePlaceholder : '';
-    const pollPlaceholder = textArea ? textArea.dataset.placeholderPoll || basePlaceholder : '';
-    const storyPlaceholder = textArea ? textArea.dataset.placeholderStory || basePlaceholder : '';
+        const pollPlaceholder = textArea ? textArea.dataset.placeholderPoll || basePlaceholder : '';
+        const storyPlaceholder = textArea ? textArea.dataset.placeholderStory || basePlaceholder : '';
+        const newsPlaceholder = textArea ? textArea.dataset.placeholderNews || basePlaceholder : '';
 
         const setPhotoError = (message) => {
             if (!photoError) {
@@ -835,6 +1125,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            if (baselineExistingAttachments > 0 && composerState.files.length === 0 && !composerState.clipboard) {
+                const remaining = Math.max(0, limit - baselineExistingAttachments);
+                if (remaining <= 0) {
+                    photoHint.textContent = baselineExistingAttachments === 1
+                        ? 'Questa bozza include già un’immagine allegata.'
+                        : `Questa bozza include già ${baselineExistingAttachments} immagini allegate.`;
+                } else {
+                    photoHint.textContent = baselineExistingAttachments === 1
+                        ? `Questa bozza include già un’immagine. Puoi aggiungerne ancora ${remaining}.`
+                        : `Questa bozza include già ${baselineExistingAttachments} immagini. Puoi aggiungerne ancora ${remaining}.`;
+                }
+                return;
+            }
+
             if (attachmentsCount === 0) {
                 photoHint.textContent = `Puoi allegare fino a ${limit} immagini (anche incollandole dagli appunti).`;
                 return;
@@ -845,6 +1149,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 photoHint.textContent = 'Hai raggiunto il limite di immagini per questo post.';
             } else {
                 photoHint.textContent = `Puoi aggiungere ancora ${remaining} ${remaining === 1 ? 'immagine' : 'immagini'}.`;
+            }
+        };
+
+        const ensureNewsSelection = () => {
+            if (!newsOptions || newsOptions.length === 0) {
+                return;
+            }
+
+            const optionsArray = Array.from(newsOptions);
+            const hasChecked = optionsArray.some((input) => input.checked);
+
+            if (!hasChecked && !restoredNewsSelection && savedNewsId > 0) {
+                const target = optionsArray.find((input) => Number.parseInt(input.value, 10) === savedNewsId);
+                if (target) {
+                    target.checked = true;
+                    restoredNewsSelection = true;
+                    return;
+                }
+            }
+
+            if (hasChecked) {
+                restoredNewsSelection = true;
+                return;
+            }
+
+            restoredNewsSelection = true;
+
+            if (optionsArray.length > 0) {
+                optionsArray[0].checked = true;
             }
         };
 
@@ -882,6 +1215,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (scheduleInput) {
                 const currentAction = actionInput ? actionInput.value : 'publish';
                 scheduleInput.required = currentAction === 'schedule';
+            }
+
+            if (newsOptions && newsOptions.length > 0) {
+                newsOptions.forEach((input) => {
+                    if (!(input instanceof HTMLInputElement)) {
+                        return;
+                    }
+
+                    input.required = mode === 'news';
+                    input.disabled = mode !== 'news';
+                });
             }
         };
 
@@ -1093,7 +1437,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const applyMode = (mode) => {
-            const allowedModes = ['text', 'photo', 'poll', 'story'];
+            const allowedModes = ['text', 'photo', 'poll', 'story', 'news'];
             const normalizedMode = allowedModes.includes(mode) ? mode : 'text';
             const attachmentCount = getAttachmentCount();
 
@@ -1133,6 +1477,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 pollSection.classList.toggle('hidden', normalizedMode !== 'poll');
             }
 
+            if (newsSection) {
+                newsSection.classList.toggle('hidden', normalizedMode !== 'news');
+            }
+
             if (textArea) {
                 if (normalizedMode === 'photo') {
                     textArea.placeholder = photoPlaceholder;
@@ -1140,6 +1488,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     textArea.placeholder = pollPlaceholder;
                 } else if (normalizedMode === 'story') {
                     textArea.placeholder = storyPlaceholder;
+                } else if (normalizedMode === 'news') {
+                    textArea.placeholder = newsPlaceholder;
                 } else {
                     textArea.placeholder = basePlaceholder;
                 }
@@ -1147,6 +1497,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             toggleRequiredAttributes(normalizedMode);
             updatePhotoHint();
+
+            if (normalizedMode === 'news') {
+                ensureNewsSelection();
+            }
         };
 
         const applyAction = (action) => {

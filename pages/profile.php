@@ -13,6 +13,9 @@ $baseProfile = [
     'username' => $currentUser['username'] ?? 'Tifoso',
     'email' => $currentUser['email'] ?? '',
     'badge' => $currentUser['badge'] ?? 'Tifoso',
+    'first_name' => $currentUser['first_name'] ?? null,
+    'last_name' => $currentUser['last_name'] ?? null,
+    'display_name' => $currentUser['display_name'] ?? null,
     'avatar_url' => null,
     'created_at' => time(),
     'updated_at' => null,
@@ -44,11 +47,14 @@ $joinedLabel = formatItalianDate($joinDateTime);
 
 $lastUpdateLabel = 'Non disponibile';
 if (!empty($userDetails['updated_at'])) {
-    $lastUpdateLabel = getHumanTimeDiff((int) $userDetails['updated_at']) . ' fa';
+    $lastUpdateLabel = getHumanTimeDiff((int) $userDetails['updated_at']);
 }
 
+$displayName = trim((string) ($userDetails['display_name'] ?? buildUserDisplayName($userDetails['first_name'] ?? null, $userDetails['last_name'] ?? null, (string) ($userDetails['username'] ?? 'Tifoso'))));
+$handle = trim((string) ($userDetails['username'] ?? ''));
 $avatarUrl = trim((string) ($userDetails['avatar_url'] ?? ''));
-$initials = strtoupper(substr($userDetails['username'] ?? 'BH', 0, 2));
+$initialsSource = $displayName !== '' ? $displayName : ($userDetails['username'] ?? 'BH');
+$initials = strtoupper(substr($initialsSource, 0, 2));
 $coverPath = trim((string) ($userDetails['cover_path'] ?? ''));
 $bio = trim((string) ($userDetails['bio'] ?? ''));
 $location = trim((string) ($userDetails['location'] ?? ''));
@@ -152,7 +158,7 @@ $recentNewsLikes = $profileSummary['recent_news_likes'] ?? [];
                     <div class="mb-4 sm:-mb-16 rounded-full border-4 border-black/70 bg-white/10 shadow-xl mx-auto sm:mx-0">
                         <div class="h-28 w-28 sm:h-32 sm:w-32 overflow-hidden rounded-full bg-white/5 text-3xl font-semibold text-white">
                             <?php if ($avatarUrl !== ''): ?>
-                                <img src="<?php echo htmlspecialchars($avatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($userDetails['username'], ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full object-cover">
+                                <img src="<?php echo htmlspecialchars($avatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($displayName !== '' ? $displayName : $handle, ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full object-cover">
                             <?php else: ?>
                                 <div class="flex h-full w-full items-center justify-center">
                                     <?php echo htmlspecialchars($initials, ENT_QUOTES, 'UTF-8'); ?>
@@ -162,8 +168,11 @@ $recentNewsLikes = $profileSummary['recent_news_likes'] ?? [];
                     </div>
                     <div class="pb-4 text-center sm:text-left">
                         <div class="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
-                            <h1 class="text-3xl font-semibold text-white md:text-4xl"><?php echo htmlspecialchars($userDetails['username'], ENT_QUOTES, 'UTF-8'); ?></h1>
+                            <h1 class="text-3xl font-semibold text-white md:text-4xl"><?php echo htmlspecialchars($displayName !== '' ? $displayName : $handle, ENT_QUOTES, 'UTF-8'); ?></h1>
                             <span class="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white/80"><?php echo htmlspecialchars($userDetails['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
+                            <?php if ($handle !== ''): ?>
+                                <span class="text-sm text-white/60">@<?php echo htmlspecialchars($handle, ENT_QUOTES, 'UTF-8'); ?></span>
+                            <?php endif; ?>
                         </div>
                         <div class="mt-2 flex flex-wrap items-center justify-center gap-4 text-xs text-white/70 sm:justify-start">
                             <span><?php echo $number($followersCount); ?> follower</span>
@@ -242,7 +251,7 @@ $recentNewsLikes = $profileSummary['recent_news_likes'] ?? [];
                                 $status = $statusLabels[$post['status']] ?? ucfirst((string) ($post['status'] ?? '')); 
                                 $contentType = $contentTypeLabels[$post['content_type']] ?? ucfirst((string) ($post['content_type'] ?? ''));
                                 $publishedTimestamp = (int) ($post['published_at'] ?? $post['created_at'] ?? time());
-                                $publishedLabel = getHumanTimeDiff($publishedTimestamp) . ' fa';
+                                $publishedLabel = getHumanTimeDiff($publishedTimestamp);
                                 $previewSource = $post['content'] !== '' ? $post['content'] : ($post['poll_question'] ?? '');
                                 $preview = $truncate($previewSource, 160);
                             ?>
@@ -386,7 +395,7 @@ $recentNewsLikes = $profileSummary['recent_news_likes'] ?? [];
                             $postId = (int) ($comment['post_id'] ?? 0);
                             $commentPreview = $truncate($comment['content'] ?? '', 140);
                             $targetPreview = $truncate($comment['post_content'] ?? '', 80);
-                            $timeLabel = getHumanTimeDiff((int) ($comment['created_at'] ?? time())) . ' fa';
+                            $timeLabel = getHumanTimeDiff((int) ($comment['created_at'] ?? time()));
                         ?>
                             <li class="rounded-2xl border border-white/10 bg-black/35 px-4 py-4">
                                 <div class="flex items-center justify-between text-xs uppercase tracking-wide text-white/50">
@@ -426,6 +435,9 @@ $recentNewsLikes = $profileSummary['recent_news_likes'] ?? [];
                                 <li class="rounded-2xl border border-white/10 bg-black/35 px-4 py-4">
                                     <p class="text-xs uppercase tracking-wide text-white/50">#<?php echo $postId; ?> · <?php echo htmlspecialchars($scheduledFor, ENT_QUOTES, 'UTF-8'); ?></p>
                                     <p class="mt-2"><?php echo htmlspecialchars($preview, ENT_QUOTES, 'UTF-8'); ?></p>
+                                    <div class="mt-3 flex flex-wrap items-center gap-2 text-xs uppercase tracking-wide text-white/60">
+                                        <a href="?action=community_compose&amp;draft=<?php echo $postId; ?>" class="inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1 font-semibold text-white transition-all hover:border-white/40">Modifica programma</a>
+                                    </div>
                                 </li>
                             <?php endforeach; ?>
                         </ul>
@@ -442,12 +454,15 @@ $recentNewsLikes = $profileSummary['recent_news_likes'] ?? [];
                         <ul class="mt-5 space-y-4 text-sm text-white/80">
                             <?php foreach ($draftPosts as $post):
                                 $postId = (int) ($post['id'] ?? 0);
-                                $updatedLabel = !empty($post['updated_at']) ? getHumanTimeDiff((int) $post['updated_at']) . ' fa' : getHumanTimeDiff((int) ($post['created_at'] ?? time())) . ' fa';
+                                $updatedLabel = !empty($post['updated_at']) ? getHumanTimeDiff((int) $post['updated_at']) : getHumanTimeDiff((int) ($post['created_at'] ?? time()));
                                 $preview = $truncate($post['content'] ?? '', 120);
                             ?>
                                 <li class="rounded-2xl border border-white/10 bg-black/35 px-4 py-4">
                                     <p class="text-xs uppercase tracking-wide text-white/50">#<?php echo $postId; ?> · aggiornato <?php echo htmlspecialchars($updatedLabel, ENT_QUOTES, 'UTF-8'); ?></p>
                                     <p class="mt-2"><?php echo htmlspecialchars($preview, ENT_QUOTES, 'UTF-8'); ?></p>
+                                    <div class="mt-3 flex flex-wrap items-center gap-2 text-xs uppercase tracking-wide text-white/60">
+                                        <a href="?action=community_compose&amp;draft=<?php echo $postId; ?>" class="inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1 font-semibold text-white transition-all hover:border-white/40">Riprendi bozza</a>
+                                    </div>
                                 </li>
                             <?php endforeach; ?>
                         </ul>
@@ -479,7 +494,7 @@ $recentNewsLikes = $profileSummary['recent_news_likes'] ?? [];
                             $slug = trim((string) ($comment['news_slug'] ?? ''));
                             $link = $slug !== '' ? '?page=news_article&slug=' . urlencode($slug) : '?page=news';
                             $preview = $truncate($comment['content'] ?? '', 120);
-                            $timeLabel = getHumanTimeDiff((int) ($comment['created_at'] ?? time())) . ' fa';
+                            $timeLabel = getHumanTimeDiff((int) ($comment['created_at'] ?? time()));
                         ?>
                             <li class="rounded-2xl border border-white/10 bg-black/35 px-4 py-4">
                                 <div class="flex items-center justify-between text-xs uppercase tracking-wide text-white/50">
@@ -510,7 +525,7 @@ $recentNewsLikes = $profileSummary['recent_news_likes'] ?? [];
                             $slug = trim((string) ($like['news_slug'] ?? ''));
                             $link = $slug !== '' ? '?page=news_article&slug=' . urlencode($slug) : '?page=news';
                             $title = $like['news_title'] ?? 'Articolo';
-                            $timeLabel = getHumanTimeDiff((int) ($like['created_at'] ?? time())) . ' fa';
+                            $timeLabel = getHumanTimeDiff((int) ($like['created_at'] ?? time()));
                         ?>
                             <li class="rounded-2xl border border-white/10 bg-black/35 px-4 py-4">
                                 <p class="text-sm font-semibold text-white"><?php echo htmlspecialchars($title, ENT_QUOTES, 'UTF-8'); ?></p>

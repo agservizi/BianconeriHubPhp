@@ -1,6 +1,14 @@
 <?php
 require_once __DIR__ . '/config.php';
 
+$siteName = isset($siteName) && is_string($siteName) && $siteName !== ''
+    ? $siteName
+    : (is_string($appName) && $appName !== '' ? $appName : 'BianconeriHub');
+
+$siteTagline = isset($siteTagline) && is_string($siteTagline) && $siteTagline !== ''
+    ? $siteTagline
+    : (is_string($appTagline) && $appTagline !== '' ? $appTagline : 'Passione bianconera ogni giorno');
+
 if (isset($_GET['action'])) {
     $action = $_GET['action'];
 
@@ -65,9 +73,132 @@ if (isset($_GET['action'])) {
         echo implode("\r\n", $icsLines);
         exit;
     }
+
+    if ($action === 'community_compose') {
+        if (!isUserLoggedIn()) {
+            setFlash('community', 'Effettua l\'accesso per usare il composer.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $user = getLoggedInUser();
+        $userId = isset($user['id']) ? (int) $user['id'] : 0;
+        if ($userId <= 0) {
+            setFlash('community', 'Sessione non valida. Effettua nuovamente il login.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $requestedMode = strtolower((string) ($_GET['mode'] ?? ''));
+        $allowedModes = ['text', 'photo', 'poll', 'story', 'news'];
+        $draftId = isset($_GET['draft']) ? (int) $_GET['draft'] : 0;
+        $oldInput = [];
+
+        if ($draftId > 0) {
+            $draft = getCommunityPostForEditing($draftId, $userId);
+
+            if (!$draft) {
+                setFlash('community', 'Bozza non trovata o non accessibile.', 'error');
+                header('Location: ?page=community');
+                exit;
+            }
+
+            if (!in_array($draft['status'], ['draft', 'scheduled'], true)) {
+                setFlash('community', 'Il post è già stato pubblicato e non può essere modificato qui.', 'error');
+                header('Location: ?page=community');
+                exit;
+            }
+
+            $contentType = strtolower((string) ($draft['content_type'] ?? 'text'));
+            $modeMap = [
+                'text' => 'text',
+                'photo' => 'photo',
+                'gallery' => 'photo',
+                'poll' => 'poll',
+                'story' => 'story',
+                'news' => 'news',
+            ];
+            $composerMode = $modeMap[$contentType] ?? 'text';
+
+            $composerAction = $draft['status'] === 'scheduled' ? 'schedule' : 'draft';
+            $scheduleAt = '';
+            if ($composerAction === 'schedule' && !empty($draft['scheduled_for'])) {
+                try {
+                    $scheduleDate = new DateTime((string) $draft['scheduled_for']);
+                    $scheduleAt = $scheduleDate->format('Y-m-d\TH:i');
+                } catch (\Throwable $exception) {
+                    $scheduleAt = '';
+                }
+            }
+
+            $pollOptions = [];
+            if (!empty($draft['poll_options']) && is_array($draft['poll_options'])) {
+                foreach ($draft['poll_options'] as $option) {
+                    $pollOptions[] = (string) $option;
+                }
+            }
+
+            $existingMediaIds = [];
+            if (!empty($draft['media']) && is_array($draft['media'])) {
+                foreach ($draft['media'] as $mediaItem) {
+                    $mediaId = (int) ($mediaItem['id'] ?? 0);
+                    if ($mediaId > 0) {
+                        $existingMediaIds[$mediaId] = $mediaId;
+                    }
+                }
+            }
+
+            $oldInput = [
+                'message' => (string) ($draft['content'] ?? ''),
+                'composer_mode' => $composerMode,
+                'composer_action' => $composerAction,
+                'schedule_at' => $scheduleAt,
+                'poll_question' => (string) ($draft['poll_question'] ?? ''),
+                'poll_options' => $pollOptions,
+                'story_title' => (string) ($draft['story_title'] ?? ''),
+                'story_caption' => (string) ($draft['story_caption'] ?? ''),
+                'story_credit' => (string) ($draft['story_credit'] ?? ''),
+                'shared_news_id' => (int) ($draft['shared_news_id'] ?? 0),
+                'shared_news_slug' => (string) ($draft['shared_news_slug'] ?? ''),
+                'draft_id' => (int) ($draft['id'] ?? 0),
+            ];
+
+            if (!empty($existingMediaIds)) {
+                $oldInput['existing_media'] = array_values($existingMediaIds);
+            }
+
+            if ($composerMode !== 'poll') {
+                $oldInput['poll_question'] = '';
+                $oldInput['poll_options'] = [];
+            }
+
+            if ($composerMode !== 'story') {
+                $oldInput['story_title'] = '';
+                $oldInput['story_caption'] = '';
+                $oldInput['story_credit'] = '';
+            }
+
+            if ($composerMode !== 'news') {
+                $oldInput['shared_news_id'] = 0;
+                $oldInput['shared_news_slug'] = '';
+            }
+        } elseif (in_array($requestedMode, $allowedModes, true)) {
+            $oldInput['composer_mode'] = $requestedMode;
+        }
+
+        clearOldInput();
+        if (!empty($oldInput)) {
+            storeOldInput($oldInput);
+        }
+
+        header('Location: ?page=community#community-composer');
+        exit;
+    }
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+$requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+if ($requestMethod === 'POST') {
     $formType = $_POST['form_type'] ?? '';
 
     if ($formType === 'login') {
@@ -116,9 +247,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         storeOldInput([
             'username' => trim($_POST['username'] ?? ''),
             'email' => trim($_POST['email'] ?? ''),
+            'first_name' => trim((string) ($_POST['first_name'] ?? '')),
+            'last_name' => trim((string) ($_POST['last_name'] ?? '')),
         ]);
         setFlash('auth', $registration['message'], 'error');
         header('Location: ?page=register');
+        exit;
+    }
+
+    if ($formType === 'forgot_password') {
+        try {
+            if (!validateCsrfToken($_POST['_token'] ?? '')) {
+                setFlash('auth', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+                header('Location: ?page=password_forgot');
+                exit;
+            }
+
+            $email = trim((string) ($_POST['email'] ?? ''));
+
+            if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                storeOldInput(['forgot_email' => $email]);
+                setFlash('auth', 'Inserisci un indirizzo email valido.', 'error');
+                header('Location: ?page=password_forgot');
+                exit;
+            }
+
+            $user = findUserByEmail($email);
+
+            if ($user) {
+                $tokenData = createPasswordResetToken((int) $user['id']);
+                if ($tokenData && isset($tokenData['token'], $tokenData['expires_at']) && $tokenData['token'] !== '') {
+                    if (!sendPasswordResetEmail($user, $tokenData['token'], $tokenData['expires_at'])) {
+                        error_log('[BianconeriHub] Unable to dispatch password reset email for user ID ' . (int) $user['id']);
+                    }
+                } else {
+                    error_log('[BianconeriHub] Token generation failed for user ID ' . (int) $user['id']);
+                }
+            }
+
+            clearOldInput();
+            setFlash('auth', 'Se l\'indirizzo è registrato riceverai tra pochi minuti un\'email con il link per reimpostare la password.', 'success');
+            header('Location: ?page=password_forgot');
+            exit;
+        } catch (Throwable $exception) {
+            error_log('[BianconeriHub] Forgot password handler error: ' . $exception->getMessage());
+            setFlash('auth', 'Si è verificato un errore inatteso. Riprova tra qualche minuto.', 'error');
+            header('Location: ?page=password_forgot');
+            exit;
+        }
+    }
+
+    if ($formType === 'password_reset') {
+        $token = trim((string) ($_POST['token'] ?? ''));
+
+        if (!validateCsrfToken($_POST['_token'] ?? '')) {
+            setFlash('auth', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+            $redirectUrl = $token !== '' ? '?page=password_reset&token=' . urlencode($token) : '?page=password_forgot';
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        $password = (string) ($_POST['password'] ?? '');
+        $passwordConfirmation = (string) ($_POST['password_confirmation'] ?? '');
+        $result = completePasswordReset($token, $password, $passwordConfirmation);
+
+        if ($result['success']) {
+            clearOldInput();
+            setFlash('auth', 'Password aggiornata con successo! Ora puoi accedere.', 'success');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $status = $result['status'] ?? '';
+        $message = $result['message'] ?? 'Impossibile reimpostare la password in questo momento.';
+
+        if (in_array($status, ['invalid', 'expired'], true)) {
+            setFlash('auth', $message, 'error');
+            header('Location: ?page=password_forgot');
+            exit;
+        }
+
+        storeOldInput(['password_reset_token' => $token]);
+        setFlash('auth', $message, 'error');
+        $redirectUrl = $token !== '' ? '?page=password_reset&token=' . urlencode($token) : '?page=password_forgot';
+        header('Location: ' . $redirectUrl);
         exit;
     }
 
@@ -165,6 +377,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'story_title' => $oldStoryTitle,
                 'story_caption' => $oldStoryCaption,
                 'story_credit' => $oldStoryCredit,
+                'shared_news_id' => isset($_POST['shared_news_id']) ? (int) $_POST['shared_news_id'] : 0,
                 'composer_action' => $oldComposerAction,
                 'schedule_at' => $oldScheduleAt,
                 'draft_id' => $oldDraftId,
@@ -223,6 +436,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($formType === 'profile_settings_update') {
         $fields = [
+            'first_name' => trim((string) ($_POST['first_name'] ?? '')),
+            'last_name' => trim((string) ($_POST['last_name'] ?? '')),
             'bio' => trim((string) ($_POST['bio'] ?? '')),
             'location' => trim((string) ($_POST['location'] ?? '')),
             'website' => trim((string) ($_POST['website'] ?? '')),
@@ -635,6 +850,7 @@ $pageTitle = $isKnownPage
     : 'Pagina non trovata';
 
 $activeNewsArticle = null;
+$activeUserProfile = null;
 if ($isKnownPage && $pageKey === 'news_article') {
     $slug = trim($_GET['slug'] ?? '');
     if ($slug !== '') {
@@ -648,9 +864,43 @@ if ($isKnownPage && $pageKey === 'news_article') {
     }
 }
 
+if ($isKnownPage && $pageKey === 'user_profile') {
+    $requestedUsername = trim((string) ($_GET['username'] ?? ''));
+    $requestedUserId = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+
+    if ($requestedUsername === '' && $requestedUserId > 0) {
+        $userFromId = findUserById($requestedUserId);
+        if ($userFromId) {
+            $requestedUsername = (string) ($userFromId['username'] ?? '');
+        }
+    }
+
+    if ($requestedUsername !== '') {
+        $viewer = getLoggedInUser();
+        $viewerId = isset($viewer['id']) ? (int) $viewer['id'] : 0;
+        $activeUserProfile = getUserProfileView($requestedUsername, $viewerId > 0 ? $viewerId : null);
+    }
+
+    if ($activeUserProfile) {
+        $profileDisplay = trim((string) ($activeUserProfile['display_name'] ?? ''));
+        $profileHandle = trim((string) ($activeUserProfile['username'] ?? ''));
+        if ($profileDisplay === '' && $profileHandle !== '') {
+            $profileDisplay = $profileHandle;
+        }
+        $pageTitle = $profileDisplay !== ''
+            ? $profileDisplay . ' | Profilo tifoso'
+            : 'Profilo tifoso';
+    } else {
+        $pageTitle = 'Profilo non trovato';
+    }
+}
+
 $currentPage = $isKnownPage ? $pageKey : '';
 if ($currentPage === 'news_article') {
     $currentPage = 'news';
+}
+if ($currentPage === 'user_profile') {
+    $currentPage = 'profile';
 }
 
 if (!$isAjaxLayoutRequest) {

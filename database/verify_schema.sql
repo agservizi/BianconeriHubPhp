@@ -23,7 +23,8 @@ FROM (
     SELECT 'community_followers' UNION ALL
     SELECT 'news_likes' UNION ALL
     SELECT 'news_comments' UNION ALL
-    SELECT 'user_push_subscriptions'
+    SELECT 'user_push_subscriptions' UNION ALL
+    SELECT 'password_resets'
 ) AS t
 LEFT JOIN information_schema.tables ist
     ON ist.table_schema = DATABASE()
@@ -40,6 +41,8 @@ FROM (
     SELECT 'users', 'email' UNION ALL
     SELECT 'users', 'password_hash' UNION ALL
     SELECT 'users', 'badge' UNION ALL
+    SELECT 'users', 'first_name' UNION ALL
+    SELECT 'users', 'last_name' UNION ALL
     SELECT 'users', 'avatar_url' UNION ALL
     SELECT 'users', 'created_at' UNION ALL
     SELECT 'users', 'updated_at' UNION ALL
@@ -98,6 +101,7 @@ FROM (
     SELECT 'community_post_mentions', 'author_id' UNION ALL
     SELECT 'community_post_mentions', 'mentioned_user_id' UNION ALL
     SELECT 'community_post_mentions', 'notified_at' UNION ALL
+    SELECT 'community_post_mentions', 'viewed_at' UNION ALL
     SELECT 'community_post_mentions', 'created_at' UNION ALL
 
     SELECT 'community_post_comments', 'id' UNION ALL
@@ -144,7 +148,13 @@ FROM (
     SELECT 'user_push_subscriptions', 'user_agent' UNION ALL
     SELECT 'user_push_subscriptions', 'scope' UNION ALL
     SELECT 'user_push_subscriptions', 'created_at' UNION ALL
-    SELECT 'user_push_subscriptions', 'updated_at'
+    SELECT 'user_push_subscriptions', 'updated_at' UNION ALL
+
+    SELECT 'password_resets', 'id' UNION ALL
+    SELECT 'password_resets', 'user_id' UNION ALL
+    SELECT 'password_resets', 'token_hash' UNION ALL
+    SELECT 'password_resets', 'expires_at' UNION ALL
+    SELECT 'password_resets', 'created_at'
 ) AS ec
 LEFT JOIN information_schema.columns ic
     ON ic.table_schema = DATABASE()
@@ -171,7 +181,8 @@ FROM (
     SELECT 'community_followers' UNION ALL
     SELECT 'news_likes' UNION ALL
     SELECT 'news_comments' UNION ALL
-    SELECT 'user_push_subscriptions'
+    SELECT 'user_push_subscriptions' UNION ALL
+    SELECT 'password_resets'
 ) AS t
 LEFT JOIN information_schema.table_constraints tc
     ON tc.table_schema = DATABASE()
