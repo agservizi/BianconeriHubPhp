@@ -795,6 +795,7 @@ $availablePages = [
     'community' => __DIR__ . '/pages/community.php',
     'profile' => __DIR__ . '/pages/profile.php',
     'profile_search' => __DIR__ . '/pages/profile_search.php',
+    'user_profile' => __DIR__ . '/pages/user_profile.php',
     'login' => __DIR__ . '/pages/login.php',
     'register' => __DIR__ . '/pages/register.php',
 ];
@@ -807,6 +808,7 @@ $pageTitles = [
     'community' => 'Community',
     'profile' => 'Profilo',
     'profile_search' => 'Cerca tifosi',
+    'user_profile' => 'Profilo tifoso',
     'login' => 'Accedi',
     'register' => 'Registrati',
 ];
@@ -1035,6 +1037,561 @@ function findUserById(int $userId): ?array
     return null;
 }
 
+function ensureUserProfilesTable(PDO $pdo): void
+{
+    static $checked = false;
+
+    if ($checked) {
+        return;
+    }
+
+    try {
+        $pdo->exec('CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id INT UNSIGNED NOT NULL,
+            bio TEXT DEFAULT NULL,
+            location VARCHAR(120) DEFAULT NULL,
+            website VARCHAR(255) DEFAULT NULL,
+            favorite_player VARCHAR(120) DEFAULT NULL,
+            favorite_memory VARCHAR(255) DEFAULT NULL,
+            cover_path VARCHAR(255) DEFAULT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id),
+            CONSTRAINT user_profiles_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Unable to ensure user_profiles table: ' . $exception->getMessage());
+    }
+
+    $checked = true;
+}
+
+function getCommunityFollowersCount(int $userId): int
+{
+    if ($userId <= 0) {
+        return 0;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return 0;
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT COUNT(*) FROM community_followers WHERE user_id = :user');
+        $statement->execute(['user' => $userId]);
+
+        return (int) ($statement->fetchColumn() ?: 0);
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to count community followers: ' . $exception->getMessage());
+    }
+
+    return 0;
+}
+
+function getUserProfileView(string $username, ?int $viewerId = null): ?array
+{
+    $normalized = trim($username);
+    if ($normalized === '') {
+        return null;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return null;
+    }
+
+    ensureUserProfilesTable($pdo);
+
+    try {
+        $statement = $pdo->prepare('SELECT u.id, u.username, u.email, u.badge, u.avatar_url, u.created_at, u.updated_at,
+            p.bio, p.location, p.website, p.favorite_player, p.favorite_memory, p.cover_path
+            FROM users u
+            LEFT JOIN user_profiles p ON p.user_id = u.id
+            WHERE LOWER(u.username) = LOWER(:username)
+            LIMIT 1');
+        $statement->execute(['username' => $normalized]);
+        $row = $statement->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        $userId = (int) ($row['id'] ?? 0);
+        $viewerId = $viewerId ? max(0, $viewerId) : 0;
+        $isCurrentUser = $viewerId > 0 && $viewerId === $userId;
+        $viewerCanFollow = $viewerId > 0 && !$isCurrentUser;
+        $isFollowing = $viewerCanFollow ? isCommunityFollower($userId, $viewerId) : false;
+
+        return [
+            'id' => $userId,
+            'username' => $row['username'] ?? '',
+            'email' => $row['email'] ?? '',
+            'badge' => $row['badge'] ?? 'Tifoso',
+            'avatar_url' => $row['avatar_url'] ?? null,
+            'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+            'updated_at' => isset($row['updated_at']) ? normalizeToTimestamp($row['updated_at']) : null,
+            'bio' => trim((string) ($row['bio'] ?? '')),
+            'location' => trim((string) ($row['location'] ?? '')),
+            'website' => trim((string) ($row['website'] ?? '')),
+            'favorite_player' => trim((string) ($row['favorite_player'] ?? '')),
+            'favorite_memory' => trim((string) ($row['favorite_memory'] ?? '')),
+            'cover_path' => trim((string) ($row['cover_path'] ?? '')),
+            'followers_count' => getCommunityFollowersCount($userId),
+            'following_count' => getCommunityFollowingCount($userId),
+            'viewer_can_follow' => $viewerCanFollow,
+            'is_following' => $isFollowing,
+            'is_current_user' => $isCurrentUser,
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load user profile view: ' . $exception->getMessage());
+    }
+
+    return null;
+}
+
+function saveUserProfileSettings(int $userId, array $input): array
+{
+    if ($userId <= 0) {
+        return ['success' => false, 'message' => 'Utente non valido.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio non disponibile al momento.'];
+    }
+
+    ensureUserProfilesTable($pdo);
+
+    $bio = trim((string) ($input['bio'] ?? ''));
+    if (mb_strlen($bio) > 500) {
+        $bio = mb_substr($bio, 0, 500);
+    }
+
+    $location = trim((string) ($input['location'] ?? ''));
+    if (mb_strlen($location) > 120) {
+        $location = mb_substr($location, 0, 120);
+    }
+
+    $website = trim((string) ($input['website'] ?? ''));
+    if ($website !== '' && !filter_var($website, FILTER_VALIDATE_URL)) {
+        $website = '';
+    }
+
+    $favoritePlayer = trim((string) ($input['favorite_player'] ?? ''));
+    if (mb_strlen($favoritePlayer) > 120) {
+        $favoritePlayer = mb_substr($favoritePlayer, 0, 120);
+    }
+
+    $favoriteMemory = trim((string) ($input['favorite_memory'] ?? ''));
+    if (mb_strlen($favoriteMemory) > 255) {
+        $favoriteMemory = mb_substr($favoriteMemory, 0, 255);
+    }
+
+    try {
+        $statement = $pdo->prepare('INSERT INTO user_profiles (user_id, bio, location, website, favorite_player, favorite_memory)
+            VALUES (:user_id, :bio, :location, :website, :favorite_player, :favorite_memory)
+            ON DUPLICATE KEY UPDATE bio = VALUES(bio), location = VALUES(location), website = VALUES(website), favorite_player = VALUES(favorite_player), favorite_memory = VALUES(favorite_memory), updated_at = CURRENT_TIMESTAMP');
+        $statement->execute([
+            'user_id' => $userId,
+            'bio' => $bio !== '' ? $bio : null,
+            'location' => $location !== '' ? $location : null,
+            'website' => $website !== '' ? $website : null,
+            'favorite_player' => $favoritePlayer !== '' ? $favoritePlayer : null,
+            'favorite_memory' => $favoriteMemory !== '' ? $favoriteMemory : null,
+        ]);
+
+        return ['success' => true];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to save user profile settings: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'message' => 'Impossibile aggiornare il profilo in questo momento.'];
+}
+
+function getProfileUploadDirectory(string $type): string
+{
+    $base = __DIR__ . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'profile';
+    $subDirectory = $type === 'cover' ? 'covers' : 'avatars';
+    $target = $base . DIRECTORY_SEPARATOR . $subDirectory;
+
+    if (!is_dir($target)) {
+        @mkdir($target, 0775, true);
+    }
+
+    return $target;
+}
+
+function deleteProfileImage(?string $relativePath): void
+{
+    if (!is_string($relativePath) || $relativePath === '') {
+        return;
+    }
+
+    $normalized = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $relativePath);
+    if (strpos($normalized, 'uploads' . DIRECTORY_SEPARATOR . 'profile' . DIRECTORY_SEPARATOR) !== 0) {
+        return;
+    }
+
+    $absolute = __DIR__ . DIRECTORY_SEPARATOR . $normalized;
+    if (is_file($absolute)) {
+        @unlink($absolute);
+    }
+}
+
+function storeProfileImageUpload(?array $file, string $type, int $userId): array
+{
+    if (!is_array($file) || !isset($file['error'])) {
+        return ['success' => false, 'message' => 'Nessun file selezionato.'];
+    }
+
+    if ((int) $file['error'] !== UPLOAD_ERR_OK) {
+        return ['success' => false, 'message' => 'Caricamento non riuscito.'];
+    }
+
+    if (!is_uploaded_file($file['tmp_name'] ?? '')) {
+        return ['success' => false, 'message' => 'File non valido.'];
+    }
+
+    $size = (int) ($file['size'] ?? 0);
+    if ($size <= 0 || $size > 7 * 1024 * 1024) {
+        return ['success' => false, 'message' => 'L\'immagine deve pesare meno di 7MB.'];
+    }
+
+    $mime = '';
+    if (class_exists('finfo')) {
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime = $finfo->file($file['tmp_name']);
+    } elseif (function_exists('mime_content_type')) {
+        $mime = mime_content_type($file['tmp_name']);
+    }
+
+    if ($mime === '' || $mime === false) {
+        return ['success' => false, 'message' => 'Impossibile determinare il tipo di file.'];
+    }
+    $allowed = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+    ];
+
+    if (!isset($allowed[$mime])) {
+        return ['success' => false, 'message' => 'Formato immagine non supportato.'];
+    }
+
+    try {
+        $random = bin2hex(random_bytes(8));
+    } catch (Throwable $exception) {
+        $random = uniqid('img', true);
+    }
+
+    $extension = $allowed[$mime];
+    $directory = getProfileUploadDirectory($type);
+    $filename = sprintf('%s-%d-%s.%s', $type === 'cover' ? 'cover' : 'avatar', $userId, $random, $extension);
+    $destination = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename;
+
+    if (!move_uploaded_file($file['tmp_name'], $destination)) {
+        return ['success' => false, 'message' => 'Impossibile salvare il file sul server.'];
+    }
+
+    $relative = 'uploads/profile/' . ($type === 'cover' ? 'covers/' : 'avatars/') . $filename;
+
+    return [
+        'success' => true,
+        'path' => str_replace(['\\'], '/', $relative),
+    ];
+}
+
+function updateUserAvatar(int $userId, ?array $file): array
+{
+    if ($userId <= 0) {
+        return ['success' => false, 'message' => 'Utente non valido.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio non disponibile.'];
+    }
+
+    $user = findUserById($userId);
+    if (!$user) {
+        return ['success' => false, 'message' => 'Utente non trovato.'];
+    }
+
+    $stored = storeProfileImageUpload($file, 'avatar', $userId);
+    if (!$stored['success']) {
+        return $stored;
+    }
+
+    $path = $stored['path'];
+
+    try {
+        $statement = $pdo->prepare('UPDATE users SET avatar_url = :avatar, updated_at = NOW() WHERE id = :id');
+        $statement->execute([
+            'avatar' => $path,
+            'id' => $userId,
+        ]);
+    } catch (PDOException $exception) {
+        deleteProfileImage($path);
+        error_log('[BianconeriHub] Failed to update user avatar: ' . $exception->getMessage());
+
+        return ['success' => false, 'message' => 'Impossibile aggiornare l\'avatar al momento.'];
+    }
+
+    if (!empty($user['avatar_url'])) {
+        deleteProfileImage($user['avatar_url']);
+    }
+
+    return ['success' => true, 'path' => $path];
+}
+
+function updateUserCover(int $userId, ?array $file): array
+{
+    if ($userId <= 0) {
+        return ['success' => false, 'message' => 'Utente non valido.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio non disponibile.'];
+    }
+
+    ensureUserProfilesTable($pdo);
+
+    $stored = storeProfileImageUpload($file, 'cover', $userId);
+    if (!$stored['success']) {
+        return $stored;
+    }
+
+    $path = $stored['path'];
+
+    try {
+        $pdo->beginTransaction();
+
+        $current = $pdo->prepare('SELECT cover_path FROM user_profiles WHERE user_id = :id FOR UPDATE');
+        $current->execute(['id' => $userId]);
+        $row = $current->fetch();
+        $previous = $row && isset($row['cover_path']) ? trim((string) $row['cover_path']) : '';
+
+        $statement = $pdo->prepare('INSERT INTO user_profiles (user_id, cover_path)
+            VALUES (:user_id, :cover_path)
+            ON DUPLICATE KEY UPDATE cover_path = VALUES(cover_path), updated_at = CURRENT_TIMESTAMP');
+        $statement->execute([
+            'user_id' => $userId,
+            'cover_path' => $path,
+        ]);
+
+        $pdo->commit();
+
+        if ($previous !== '') {
+            deleteProfileImage($previous);
+        }
+    } catch (PDOException $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        deleteProfileImage($path);
+        error_log('[BianconeriHub] Failed to update user cover: ' . $exception->getMessage());
+
+        return ['success' => false, 'message' => 'Impossibile aggiornare la copertina al momento.'];
+    }
+
+    return ['success' => true, 'path' => $path];
+}
+
+function getUserCommunityPosts(int $authorId, int $offset = 0, int $limit = 6): array
+{
+    $authorId = $authorId > 0 ? $authorId : 0;
+    if ($authorId <= 0) {
+        return ['posts' => [], 'has_more' => false, 'next_offset' => $offset];
+    }
+
+    $limit = max(1, min($limit, 20));
+    $offset = max(0, $offset);
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['posts' => [], 'has_more' => false, 'next_offset' => $offset];
+    }
+
+    $viewer = getLoggedInUser();
+    $viewerId = isset($viewer['id']) ? (int) $viewer['id'] : 0;
+    $viewerIsAuthor = $viewerId > 0 && $viewerId === $authorId;
+    $extended = function_exists('communityPostsExtendedSchemaAvailable') ? communityPostsExtendedSchemaAvailable($pdo) : false;
+
+    $baseColumns = 'p.id, p.user_id, p.content, p.content_type, p.media_url, p.poll_question, p.poll_options, p.created_at';
+    if ($extended) {
+        $baseColumns .= ', p.status, p.published_at';
+    }
+
+    $sql = 'SELECT ' . $baseColumns . ', u.username, u.badge
+        FROM community_posts p
+        INNER JOIN users u ON u.id = p.user_id
+        WHERE p.user_id = :author';
+
+    if ($extended) {
+        $sql .= ' AND (p.status IS NULL OR p.status = "published"';
+        if ($viewerIsAuthor) {
+            $sql .= ' OR p.status IN ("draft", "scheduled")';
+        }
+        $sql .= ')';
+    }
+
+    $sql .= ' ORDER BY COALESCE(p.published_at, p.created_at) DESC LIMIT :limit OFFSET :offset';
+
+    $statement = $pdo->prepare($sql);
+    $statement->bindValue(':author', $authorId, PDO::PARAM_INT);
+    $statement->bindValue(':limit', $limit + 1, PDO::PARAM_INT);
+    $statement->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $statement->execute();
+
+    $rows = $statement->fetchAll();
+    $hasMore = count($rows) > $limit;
+    if ($hasMore) {
+        $rows = array_slice($rows, 0, $limit);
+    }
+
+    if (empty($rows)) {
+        return ['posts' => [], 'has_more' => false, 'next_offset' => $offset];
+    }
+
+    $postIds = [];
+    foreach ($rows as $row) {
+        $postId = (int) ($row['id'] ?? 0);
+        if ($postId > 0) {
+            $postIds[$postId] = $postId;
+        }
+    }
+
+    $likes = [];
+    $supports = [];
+    $comments = [];
+
+    if (!empty($postIds)) {
+        $placeholders = implode(',', array_fill(0, count($postIds), '?'));
+
+        try {
+            $likesStatement = $pdo->prepare('SELECT post_id, COUNT(*) AS total FROM community_post_reactions WHERE reaction_type = "like" AND post_id IN (' . $placeholders . ') GROUP BY post_id');
+            $likesStatement->execute(array_values($postIds));
+            foreach ($likesStatement as $row) {
+                $postId = (int) ($row['post_id'] ?? 0);
+                if ($postId > 0) {
+                    $likes[$postId] = (int) ($row['total'] ?? 0);
+                }
+            }
+
+            $supportsStatement = $pdo->prepare('SELECT post_id, COUNT(*) AS total FROM community_post_reactions WHERE reaction_type = "support" AND post_id IN (' . $placeholders . ') GROUP BY post_id');
+            $supportsStatement->execute(array_values($postIds));
+            foreach ($supportsStatement as $row) {
+                $postId = (int) ($row['post_id'] ?? 0);
+                if ($postId > 0) {
+                    $supports[$postId] = (int) ($row['total'] ?? 0);
+                }
+            }
+
+            $commentsStatement = $pdo->prepare('SELECT post_id, COUNT(*) AS total FROM community_post_comments WHERE post_id IN (' . $placeholders . ') GROUP BY post_id');
+            $commentsStatement->execute(array_values($postIds));
+            foreach ($commentsStatement as $row) {
+                $postId = (int) ($row['post_id'] ?? 0);
+                if ($postId > 0) {
+                    $comments[$postId] = (int) ($row['total'] ?? 0);
+                }
+            }
+        } catch (PDOException $exception) {
+            error_log('[BianconeriHub] Failed to aggregate community post stats: ' . $exception->getMessage());
+        }
+    }
+
+    $mediaMap = getCommunityPostMedia(array_values($postIds));
+
+    $viewerReactions = [
+        'like' => [],
+        'support' => [],
+    ];
+
+    if ($viewerId > 0 && !empty($postIds)) {
+        try {
+            $reactionStatement = $pdo->prepare('SELECT post_id, reaction_type FROM community_post_reactions WHERE user_id = :user_id AND post_id IN (' . $placeholders . ')');
+            $reactionStatement->execute(array_merge([$viewerId], array_values($postIds)));
+            foreach ($reactionStatement as $row) {
+                $postId = (int) ($row['post_id'] ?? 0);
+                $type = $row['reaction_type'] ?? '';
+                if ($postId > 0 && isset($viewerReactions[$type])) {
+                    $viewerReactions[$type][$postId] = true;
+                }
+            }
+        } catch (PDOException $exception) {
+            error_log('[BianconeriHub] Failed to load viewer reactions: ' . $exception->getMessage());
+        }
+    }
+
+    $viewerCanFollow = $viewerId > 0 && !$viewerIsAuthor;
+    $isFollowingAuthor = $viewerCanFollow ? isCommunityFollower($authorId, $viewerId) : false;
+
+    $posts = [];
+    foreach ($rows as $row) {
+        $postId = (int) ($row['id'] ?? 0);
+        if ($postId <= 0) {
+            continue;
+        }
+
+        $content = (string) ($row['content'] ?? '');
+        $mentions = extractMentionsFromText($content);
+        $mentionMap = getUsersByUsernames($mentions);
+        $rendered = renderCommunityContent($content, $mentionMap);
+
+        $pollOptions = [];
+        if (!empty($row['poll_options'])) {
+            try {
+                $decoded = json_decode((string) $row['poll_options'], true, 512, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $optionValue) {
+                        $optionText = trim((string) $optionValue);
+                        if ($optionText !== '') {
+                            $pollOptions[] = mb_substr($optionText, 0, 120);
+                        }
+                    }
+                }
+            } catch (\JsonException $exception) {
+                $pollOptions = [];
+            }
+        }
+
+        $posts[] = [
+            'id' => $postId,
+            'user_id' => (int) ($row['user_id'] ?? 0),
+            'author' => $row['username'] ?? 'Tifoso',
+            'badge' => $row['badge'] ?? 'Tifoso',
+            'content' => $content,
+            'content_rendered' => $rendered['html'],
+            'mentions' => $rendered['mentions'],
+            'content_type' => $row['content_type'] ?? 'text',
+            'media_url' => $row['media_url'] ?? '',
+            'media' => $mediaMap[$postId] ?? [],
+            'poll_question' => $row['poll_question'] ?? '',
+            'poll_options' => $pollOptions,
+            'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+            'published_at' => $extended ? normalizeToTimestamp($row['published_at'] ?? ($row['created_at'] ?? time())) : normalizeToTimestamp($row['created_at'] ?? time()),
+            'likes_count' => $likes[$postId] ?? 0,
+            'supports_count' => $supports[$postId] ?? 0,
+            'comments_count' => $comments[$postId] ?? 0,
+            'has_liked' => isset($viewerReactions['like'][$postId]),
+            'has_supported' => isset($viewerReactions['support'][$postId]),
+            'viewer_can_follow' => false,
+            'is_following_author' => $isFollowingAuthor,
+        ];
+    }
+
+    return [
+        'posts' => $posts,
+        'has_more' => $hasMore,
+        'next_offset' => $offset + count($posts),
+        'viewer_can_follow' => $viewerCanFollow,
+        'is_following_author' => $isFollowingAuthor,
+    ];
+}
+
 function searchCommunityUsers(string $query, int $limit = 12, int $offset = 0): array
 {
     $term = trim($query);
@@ -1069,15 +1626,10 @@ function searchCommunityUsers(string $query, int $limit = 12, int $offset = 0): 
     $currentUser = getLoggedInUser();
     $currentUserId = isset($currentUser['id']) ? (int) $currentUser['id'] : 0;
 
-    $escapedTerm = strtr($term, [
-        "\\" => "\\\\",
-        "%" => "\\%",
-        "_" => "\\_",
-    ]);
-    $likeTerm = '%' . $escapedTerm . '%';
+    $likeTerm = '%' . $term . '%';
 
     try {
-        $countStatement = $pdo->prepare("SELECT COUNT(*) FROM users WHERE username LIKE :term ESCAPE '\\\\'");
+        $countStatement = $pdo->prepare('SELECT COUNT(*) FROM users WHERE username LIKE :term');
         $countStatement->execute(['term' => $likeTerm]);
         $total = (int) ($countStatement->fetchColumn() ?: 0);
         $response['total'] = $total;
@@ -1091,7 +1643,7 @@ SELECT u.id, u.username, u.badge, u.avatar_url, u.created_at,
        CASE WHEN f.follower_id IS NULL THEN 0 ELSE 1 END AS is_following
 FROM users u
 LEFT JOIN community_followers f ON f.user_id = u.id AND f.follower_id = :viewer
-WHERE u.username LIKE :term ESCAPE '\\'
+WHERE u.username LIKE :term
 ORDER BY u.username ASC
 LIMIT $limit OFFSET $offset
 SQL;
@@ -1127,7 +1679,57 @@ SQL;
 
         return $response;
     } catch (PDOException $exception) {
-        error_log('[BianconeriHub] Failed to search community users: ' . $exception->getMessage());
+        $sqlState = $exception->getCode();
+        $message = $exception->getMessage();
+        $missingFollowersTable = $sqlState === '42S02' || stripos($message, 'community_followers') !== false;
+
+        if ($missingFollowersTable) {
+            error_log('[BianconeriHub] Followers table not available, using fallback search: ' . $message);
+
+            try {
+                $fallbackSql = <<<SQL
+SELECT u.id, u.username, u.badge, u.avatar_url, u.created_at
+FROM users u
+WHERE u.username LIKE :term
+ORDER BY u.username ASC
+LIMIT $limit OFFSET $offset
+SQL;
+
+                $fallback = $pdo->prepare($fallbackSql);
+                $fallback->bindValue(':term', $likeTerm, PDO::PARAM_STR);
+                $fallback->execute();
+
+                $results = [];
+                foreach ($fallback as $row) {
+                    $userId = (int) ($row['id'] ?? 0);
+                    if ($userId <= 0) {
+                        continue;
+                    }
+
+                    $createdAt = normalizeToTimestamp($row['created_at'] ?? time());
+
+                    $results[] = [
+                        'id' => $userId,
+                        'username' => $row['username'] ?? '',
+                        'badge' => $row['badge'] ?? 'Tifoso',
+                        'avatar_url' => $row['avatar_url'] ?? null,
+                        'created_at' => $createdAt,
+                        'is_following' => false,
+                        'viewer_can_follow' => $currentUserId > 0 && $currentUserId !== $userId,
+                        'is_current_user' => $currentUserId > 0 && $currentUserId === $userId,
+                    ];
+                }
+
+                $response['results'] = $results;
+                $response['has_more'] = ($offset + count($results)) < $total;
+
+                return $response;
+            } catch (PDOException $fallbackException) {
+                error_log('[BianconeriHub] Failed to search community users (fallback): ' . $fallbackException->getMessage());
+            }
+        } else {
+            error_log('[BianconeriHub] Failed to search community users: ' . $message);
+        }
     }
 
     return $response;
@@ -1309,31 +1911,33 @@ function getUserProfileSummary(int $userId): array
     return $summary;
 }
 
-function findUserByUsername(string $username): ?array
-{
-    $pdo = getDatabaseConnection();
-    if (!$pdo) {
-        return null;
-    }
-
-    try {
-        $statement = $pdo->prepare('SELECT id, username, email, password_hash, badge, created_at FROM users WHERE LOWER(username) = LOWER(:username) LIMIT 1');
-        $statement->execute(['username' => $username]);
-        $user = $statement->fetch();
-
-        if (!$user) {
+if (!function_exists('findUserByUsername')) {
+    function findUserByUsername(string $username): ?array
+    {
+        $pdo = getDatabaseConnection();
+        if (!$pdo) {
             return null;
         }
 
-        $user['id'] = (int) ($user['id'] ?? 0);
-        $user['created_at'] = normalizeToTimestamp($user['created_at'] ?? time());
+        try {
+            $statement = $pdo->prepare('SELECT id, username, email, password_hash, badge, created_at FROM users WHERE LOWER(username) = LOWER(:username) LIMIT 1');
+            $statement->execute(['username' => $username]);
+            $user = $statement->fetch();
 
-        return $user;
-    } catch (PDOException $exception) {
-        error_log('[BianconeriHub] Failed to find user by username: ' . $exception->getMessage());
+            if (!$user) {
+                return null;
+            }
+
+            $user['id'] = (int) ($user['id'] ?? 0);
+            $user['created_at'] = normalizeToTimestamp($user['created_at'] ?? time());
+
+            return $user;
+        } catch (PDOException $exception) {
+            error_log('[BianconeriHub] Failed to find user by username: ' . $exception->getMessage());
+        }
+
+        return null;
     }
-
-    return null;
 }
 
 function registerUser(array $payload): array
@@ -2724,32 +3328,85 @@ function resolveCommunityUploadDirectory(): string
     return __DIR__ . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'community';
 }
 
+function communityUploadErrorMessage(int $error): string
+{
+    switch ($error) {
+        case UPLOAD_ERR_INI_SIZE:
+            return 'La foto supera la dimensione massima consentita dal server.';
+        case UPLOAD_ERR_FORM_SIZE:
+            return 'La foto è troppo grande. Dimensione massima 5 MB.';
+        case UPLOAD_ERR_PARTIAL:
+            return 'Il caricamento è stato interrotto. Riprova.';
+        case UPLOAD_ERR_NO_FILE:
+            return 'Nessun file caricato.';
+        case UPLOAD_ERR_NO_TMP_DIR:
+            return 'Cartella temporanea non disponibile sul server.';
+        case UPLOAD_ERR_CANT_WRITE:
+            return 'Impossibile salvare la foto sul server.';
+        case UPLOAD_ERR_EXTENSION:
+            return 'Caricamento interrotto da un’estensione PHP.';
+        default:
+            return 'Caricamento immagine non riuscito. Riprova.';
+    }
+}
+
+function detectCommunityUploadMime(string $path): string
+{
+    $mime = '';
+    $finfo = null;
+    $detected = null;
+
+    if (function_exists('finfo_open')) {
+        $finfo = @finfo_open(FILEINFO_MIME_TYPE) ?: null;
+        if ($finfo !== null) {
+            $detected = @finfo_file($finfo, $path);
+            if (is_string($detected)) {
+                $mime = $detected;
+            }
+            finfo_close($finfo);
+        }
+    }
+
+    if ($mime === '') {
+        $imageInfo = @getimagesize($path);
+        if (is_array($imageInfo) && isset($imageInfo['mime']) && is_string($imageInfo['mime'])) {
+            $mime = $imageInfo['mime'];
+        }
+    }
+
+    return strtolower($mime);
+}
+
+function communityExtensionFromMime(string $mime): ?string
+{
+    switch (strtolower($mime)) {
+        case 'image/jpeg':
+            return 'jpg';
+        case 'image/png':
+            return 'png';
+        case 'image/webp':
+            return 'webp';
+        case 'image/gif':
+            return 'gif';
+        default:
+            return null;
+    }
+}
+
 function handleCommunityPhotoUpload(array $file): array
 {
-    $error = $file['error'] ?? UPLOAD_ERR_NO_FILE;
+    $error = isset($file['error']) ? (int) $file['error'] : UPLOAD_ERR_NO_FILE;
 
     if ($error === UPLOAD_ERR_NO_FILE) {
         return ['success' => false, 'message' => ''];
     }
 
     if ($error !== UPLOAD_ERR_OK) {
-        $messages = [
-            UPLOAD_ERR_INI_SIZE => 'La foto supera la dimensione massima consentita dal server.',
-            UPLOAD_ERR_FORM_SIZE => 'La foto è troppo grande. Dimensione massima 5 MB.',
-            UPLOAD_ERR_PARTIAL => 'Il caricamento è stato interrotto. Riprova.',
-            UPLOAD_ERR_NO_FILE => 'Nessun file caricato.',
-            UPLOAD_ERR_NO_TMP_DIR => 'Cartella temporanea non disponibile sul server.',
-            UPLOAD_ERR_CANT_WRITE => 'Impossibile salvare la foto sul server.',
-            UPLOAD_ERR_EXTENSION => 'Caricamento interrotto da un’estensione PHP.',
-        ];
-
-        $message = $messages[$error] ?? 'Caricamento immagine non riuscito. Riprova.';
-
-        return ['success' => false, 'message' => $message];
+        return ['success' => false, 'message' => communityUploadErrorMessage($error)];
     }
 
-    $tmpName = $file['tmp_name'] ?? '';
-    if (!is_string($tmpName) || $tmpName === '' || !is_uploaded_file($tmpName)) {
+    $tmpName = isset($file['tmp_name']) && is_string($file['tmp_name']) ? $file['tmp_name'] : '';
+    if ($tmpName === '' || !is_uploaded_file($tmpName)) {
         return ['success' => false, 'message' => 'Caricamento immagine non valido.'];
     }
 
@@ -2759,35 +3416,12 @@ function handleCommunityPhotoUpload(array $file): array
         return ['success' => false, 'message' => 'La foto deve pesare al massimo 5 MB.'];
     }
 
-    $mime = '';
-    if (function_exists('finfo_open')) {
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        if ($finfo) {
-            $detected = finfo_file($finfo, $tmpName);
-            if (is_string($detected)) {
-                $mime = $detected;
-            }
-            finfo_close($finfo);
-        }
+    $mime = detectCommunityUploadMime($tmpName);
+    $extension = communityExtensionFromMime($mime);
+
+    if ($extension === null) {
+        return ['success' => false, 'message' => 'Formato immagine non supportato. Usa JPEG, PNG, WEBP o GIF.'];
     }
-
-    $allowed = [
-        'image/jpeg' => 'jpg',
-        'image/png' => 'png',
-        'image/webp' => 'webp',
-        'image/gif' => 'gif',
-    ];
-
-    if (!array_key_exists($mime, $allowed)) {
-        $imageInfo = @getimagesize($tmpName);
-        if ($imageInfo && isset($imageInfo['mime']) && array_key_exists($imageInfo['mime'], $allowed)) {
-            $mime = $imageInfo['mime'];
-        } else {
-            return ['success' => false, 'message' => 'Formato immagine non supportato. Usa JPEG, PNG, WEBP o GIF.'];
-        }
-    }
-
-    $extension = $allowed[$mime];
 
     $baseDir = resolveCommunityUploadDirectory();
     $subDir = date('Y') . DIRECTORY_SEPARATOR . date('m');
@@ -2858,15 +3492,9 @@ function handleCommunityClipboardUpload(string $dataUrl, string $originalName = 
     }
 
     $mime = strtolower($imageInfo['mime']);
+    $extension = communityExtensionFromMime($mime);
 
-    $allowed = [
-        'image/jpeg' => 'jpg',
-        'image/png' => 'png',
-        'image/webp' => 'webp',
-        'image/gif' => 'gif',
-    ];
-
-    if (!array_key_exists($mime, $allowed)) {
+    if ($extension === null) {
         return ['success' => false, 'message' => 'Formato immagine non supportato. Usa JPEG, PNG, WEBP o GIF.'];
     }
 
@@ -2886,7 +3514,6 @@ function handleCommunityClipboardUpload(string $dataUrl, string $originalName = 
         $random = bin2hex(openssl_random_pseudo_bytes(8));
     }
 
-    $extension = $allowed[$mime];
     $originalBase = trim(pathinfo($originalName, PATHINFO_FILENAME)) ?: 'clipboard';
     $sanitizedBase = preg_replace('/[^a-z0-9\-]+/i', '-', strtolower($originalBase));
     $sanitizedBase = trim($sanitizedBase, '-') ?: 'clipboard';

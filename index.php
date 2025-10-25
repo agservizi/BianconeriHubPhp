@@ -463,6 +463,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $pageKey = isset($_GET['page']) ? strtolower(trim($_GET['page'])) : 'home';
+$isAjaxLayoutRequest = isset($_GET['ajax']) && $_GET['ajax'] === '1';
 $isKnownPage = array_key_exists($pageKey, $availablePages);
 
 $pageFile = $isKnownPage ? $availablePages[$pageKey] : null;
@@ -489,11 +490,21 @@ if ($currentPage === 'news_article') {
     $currentPage = 'news';
 }
 
-require __DIR__ . '/includes/header.php';
+if (!$isAjaxLayoutRequest) {
+    require __DIR__ . '/includes/header.php';
+}
 
 if ($pageFile && file_exists($pageFile)) {
     include $pageFile;
 } else {
+    if ($isAjaxLayoutRequest) {
+        http_response_code(404);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'error' => 'Pagina non trovata',
+        ]);
+        exit;
+    }
     ?>
     <section class="space-y-4 text-center">
         <h1 class="text-2xl font-bold">Pagina non trovata</h1>
@@ -508,5 +519,7 @@ if ($pageFile && file_exists($pageFile)) {
     <?php
 }
 
-require __DIR__ . '/includes/navbar.php';
-require __DIR__ . '/includes/footer.php';
+if (!$isAjaxLayoutRequest) {
+    require __DIR__ . '/includes/navbar.php';
+    require __DIR__ . '/includes/footer.php';
+}

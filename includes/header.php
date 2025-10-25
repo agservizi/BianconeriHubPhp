@@ -166,8 +166,13 @@ if (($currentPage ?? '') === 'profile_search') {
                                     </a>
                                 </li>
                                 <?php if ($pageKey === 'profile'): ?>
-                                    <li>
-                                        <form action="" method="get" class="flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-sm text-white transition-all focus-within:border-white/60">
+                                    <li class="relative" data-nav-profile-search-container data-nav-profile-search-min-length="2">
+                                        <form
+                                            action="?page=profile_search"
+                                            method="get"
+                                            class="flex items-center gap-2 rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-sm text-white transition-all focus-within:border-white/60"
+                                            data-nav-profile-search-form
+                                        >
                                             <input type="hidden" name="page" value="profile_search">
                                             <label for="nav-profile-search" class="sr-only">Cerca tifosi</label>
                                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -181,9 +186,14 @@ if (($currentPage ?? '') === 'profile_search') {
                                                 class="w-40 bg-transparent text-sm text-white placeholder:text-gray-500 focus:outline-none md:w-48"
                                                 placeholder="Cerca tifoso"
                                                 autocomplete="off"
+                                                data-nav-profile-search-input
                                             >
                                             <button type="submit" class="rounded-full bg-white/10 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gray-300 transition-all hover:bg-white hover:text-black">Vai</button>
                                         </form>
+                                        <div
+                                            class="absolute right-0 top-full z-50 mt-2 hidden w-60 max-w-xs rounded-2xl border border-white/15 bg-black/95 p-3 text-sm text-white shadow-2xl"
+                                            data-nav-profile-search-results
+                                        ></div>
                                     </li>
                                 <?php endif; ?>
                             <?php } ?>

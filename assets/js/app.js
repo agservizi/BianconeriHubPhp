@@ -319,7 +319,211 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    const initNavbarProfileSearch = () => {
+        const container = document.querySelector('[data-nav-profile-search-container]');
+        if (!container) {
+            return;
+        }
+
+        const form = container.querySelector('[data-nav-profile-search-form]');
+        const input = container.querySelector('[data-nav-profile-search-input]');
+        const resultsPanel = container.querySelector('[data-nav-profile-search-results]');
+        if (!form || !input || !resultsPanel) {
+            return;
+        }
+
+        const minimumLength = parseInt(container.dataset.navProfileSearchMinLength || '2', 10);
+        const supportsAbort = typeof AbortController !== 'undefined';
+        let activeController = null;
+        let lastQuery = '';
+
+        const hideResults = () => {
+            resultsPanel.innerHTML = '';
+            resultsPanel.classList.add('hidden');
+            resultsPanel.dataset.state = 'hidden';
+        };
+
+        hideResults();
+
+        const renderMessage = (message) => {
+            const text = typeof message === 'string' ? message.trim() : '';
+            if (text === '') {
+                hideResults();
+                return;
+            }
+
+            resultsPanel.innerHTML = `<p class="text-xs text-gray-300">${text}</p>`;
+            resultsPanel.classList.remove('hidden');
+            resultsPanel.dataset.state = 'message';
+        };
+
+        const renderResults = (items, hasMore, query) => {
+            if (!Array.isArray(items) || items.length === 0) {
+                renderMessage('Nessun tifoso trovato.');
+                return;
+            }
+
+            const escapeHtml = (value) => String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+
+            const listItems = items.slice(0, 5).map((item) => {
+                const username = typeof item.username === 'string' ? item.username : '';
+                const badge = typeof item.badge === 'string' ? item.badge : 'Tifoso';
+                const displayName = username !== '' ? username : 'Tifoso anonimo';
+                const safeName = escapeHtml(displayName);
+                const safeBadge = escapeHtml(badge);
+                const targetQuery = username !== '' ? username : query;
+                const targetUrl = `?page=profile_search&q=${encodeURIComponent(targetQuery)}`;
+                return `
+                    <li>
+                        <a href="${targetUrl}" class="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white transition-all hover:border-white/30 hover:bg-white/10">
+                            <span class="font-medium">${safeName}</span>
+                            <span class="text-xs text-gray-300">${safeBadge}</span>
+                        </a>
+                    </li>
+                `;
+            }).join('');
+
+            const moreLink = hasMore
+                ? `<div class="mt-2 border-t border-white/10 pt-2 text-center text-xs text-gray-300">
+                        <a href="?page=profile_search&q=${encodeURIComponent(query)}" class="font-semibold text-white hover:underline">Vedi tutti i risultati</a>
+                   </div>`
+                : '';
+
+            resultsPanel.innerHTML = `<ul class="space-y-2">${listItems}</ul>${moreLink}`;
+            resultsPanel.classList.remove('hidden');
+            resultsPanel.dataset.state = 'results';
+        };
+
+        const buildRequestUrl = (query) => {
+            const action = form.getAttribute('action') || '?page=profile_search';
+            const url = new URL(action, window.location.href);
+            if (!url.searchParams.has('page')) {
+                url.searchParams.set('page', 'profile_search');
+            }
+            url.searchParams.set('ajax', '1');
+            url.searchParams.set('q', query);
+            url.searchParams.set('p', '1');
+            return url;
+        };
+
+        const executeSearch = (query) => {
+            const normalizedQuery = query.trim();
+            if (normalizedQuery.length < minimumLength) {
+                hideResults();
+                lastQuery = normalizedQuery;
+                if (supportsAbort && activeController) {
+                    activeController.abort();
+                    activeController = null;
+                }
+                return;
+            }
+
+            if (normalizedQuery === lastQuery) {
+                return;
+            }
+
+            if (supportsAbort && activeController) {
+                activeController.abort();
+                activeController = null;
+            }
+
+            const requestUrl = buildRequestUrl(normalizedQuery);
+            const controller = supportsAbort ? new AbortController() : null;
+            if (controller) {
+                activeController = controller;
+            }
+
+            fetch(requestUrl.toString(), {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+                signal: controller ? controller.signal : undefined,
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error(`Unexpected response status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then((payload) => {
+                    if (controller && controller.signal.aborted) {
+                        return;
+                    }
+
+                    lastQuery = normalizedQuery;
+                    activeController = null;
+
+                    if (payload.too_short) {
+                        hideResults();
+                        return;
+                    }
+
+                    if (Array.isArray(payload.results)) {
+                        renderResults(payload.results, Boolean(payload.has_more), normalizedQuery);
+                        return;
+                    }
+
+                    if (payload.results_count && payload.results_count > 0) {
+                        renderResults([], false, normalizedQuery);
+                    } else {
+                        renderMessage('Nessun tifoso trovato.');
+                    }
+                })
+                .catch((error) => {
+                    if (controller && controller.signal.aborted) {
+                        return;
+                    }
+
+                    activeController = null;
+                    renderMessage('Errore durante la ricerca.');
+                    // eslint-disable-next-line no-console
+                    console.error('Navbar profile search failed:', error);
+                });
+        };
+
+        const handleInput = debounce(() => {
+            executeSearch(input.value);
+        }, 250);
+
+        input.addEventListener('input', () => {
+            handleInput();
+        });
+
+        input.addEventListener('focus', () => {
+            const current = input.value.trim();
+            if (current.length >= minimumLength && resultsPanel.dataset.state === 'results') {
+                resultsPanel.classList.remove('hidden');
+            }
+        });
+
+        form.addEventListener('submit', () => {
+            hideResults();
+        });
+
+        resultsPanel.addEventListener('click', (event) => {
+            const targetLink = event.target instanceof Element ? event.target.closest('a[href]') : null;
+            if (targetLink) {
+                hideResults();
+            }
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!container.contains(event.target)) {
+                hideResults();
+            }
+        });
+    };
+
     initProfileSearchInstant();
+    initNavbarProfileSearch();
 
     const composer = document.querySelector('[data-community-composer]');
     if (composer) {
@@ -1104,6 +1308,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 let subscription = await reg.pushManager.getSubscription();
 
                 if (!subscription) {
+                    if ('Notification' in window) {
+                        const permission = Notification.permission;
+                        if (permission === 'denied') {
+                            setStatus('Notifiche bloccate dal browser: abilita le notifiche per questo sito e riprova.');
+                            toggleButtons(false);
+                            storeState(false);
+                            return;
+                        }
+
+                        if (permission !== 'granted') {
+                            let requestResult = permission;
+                            try {
+                                requestResult = await Notification.requestPermission();
+                            } catch (permissionError) {
+                                console.warn('Notification permission request failed:', permissionError);
+                            }
+
+                            if (requestResult !== 'granted') {
+                                setStatus('Per attivare le notifiche consenti le notifiche nel browser e riprova.');
+                                toggleButtons(false);
+                                storeState(false);
+                                return;
+                            }
+                        }
+                    }
+
                     if (updateOnly) {
                         setStatus('Non ci sono notifiche attive su questo dispositivo.');
                         toggleButtons(false);

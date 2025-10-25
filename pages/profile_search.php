@@ -197,6 +197,13 @@ if ($isAjaxRequest) {
         'minimum_length' => $minimumLength,
         'results_count' => count($results),
         'per_page' => $perPage,
+        'results' => array_map(static function ($user) {
+            return [
+                'id' => (int) ($user['id'] ?? 0),
+                'username' => $user['username'] ?? '',
+                'badge' => $user['badge'] ?? 'Tifoso',
+            ];
+        }, $results),
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
