@@ -522,8 +522,226 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    const initCityAutocomplete = () => {
+        const inputs = Array.from(document.querySelectorAll('[data-city-autocomplete]'));
+        if (inputs.length === 0) {
+            return;
+        }
+
+        const sourceCache = new Map();
+
+        const ensureData = (sourceUrl) => {
+            if (sourceCache.has(sourceUrl)) {
+                const cacheEntry = sourceCache.get(sourceUrl);
+                if (cacheEntry.loaded) {
+                    return Promise.resolve(cacheEntry.cities);
+                }
+                if (cacheEntry.promise) {
+                    return cacheEntry.promise;
+                }
+            }
+
+            const fetchPromise = fetch(sourceUrl, {
+                credentials: 'same-origin',
+                cache: 'default',
+                headers: {
+                    Accept: 'application/json',
+                },
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to load city list (${response.status})`);
+                    }
+                    return response.json();
+                })
+                .then((data) => {
+                    const pickFirstString = (...candidates) => {
+                        for (let index = 0; index < candidates.length; index += 1) {
+                            const candidate = candidates[index];
+                            if (typeof candidate === 'string') {
+                                const trimmed = candidate.trim();
+                                if (trimmed !== '') {
+                                    return trimmed;
+                                }
+                            }
+                        }
+                        return '';
+                    };
+
+                    const normalizeEntry = (entry) => {
+                        if (typeof entry === 'string') {
+                            const trimmed = entry.trim();
+                            if (trimmed === '') {
+                                return null;
+                            }
+                            return {
+                                value: trimmed,
+                                search: trimmed.toLowerCase(),
+                            };
+                        }
+
+                        if (entry && typeof entry === 'object') {
+                            const name = pickFirstString(entry.nome, entry.denominazione, entry.name);
+                            if (name === '') {
+                                return null;
+                            }
+
+                            const provinceSigla = pickFirstString(
+                                entry.sigla,
+                                entry.siglaProvincia,
+                                entry.sigla_provincia,
+                                entry.provincia && entry.provincia.sigla,
+                                entry.province && entry.province.sigla
+                            );
+
+                            const provinceName = pickFirstString(
+                                entry.nomeProvincia,
+                                entry.provincia && entry.provincia.nome,
+                                entry.province && entry.province.nome
+                            );
+
+                            const regionName = pickFirstString(
+                                entry.nomeRegione,
+                                entry.regione && entry.regione.nome,
+                                entry.region && entry.region.nome
+                            );
+
+                            const cap = Array.isArray(entry.cap)
+                                ? entry.cap.map((value) => String(value).trim()).filter((value) => value !== '').join(' ')
+                                : pickFirstString(entry.cap);
+
+                            const value = provinceSigla !== '' ? `${name} (${provinceSigla})` : name;
+                            const tokens = [name, provinceSigla, provinceName, regionName, cap]
+                                .filter((token) => token && token !== '')
+                                .join(' ')
+                                .toLowerCase();
+
+                            return {
+                                value,
+                                search: tokens !== '' ? tokens : name.toLowerCase(),
+                            };
+                        }
+
+                        return null;
+                    };
+
+                    const cities = Array.isArray(data)
+                        ? data
+                            .map((entry) => normalizeEntry(entry))
+                            .filter((entry) => entry !== null)
+                        : [];
+                    sourceCache.set(sourceUrl, {
+                        loaded: true,
+                        cities,
+                        promise: null,
+                    });
+                    return cities;
+                })
+                .catch((error) => {
+                    console.error('City autocomplete load failed:', error);
+                    sourceCache.set(sourceUrl, {
+                        loaded: true,
+                        cities: [],
+                        promise: null,
+                    });
+                    return [];
+                });
+
+            sourceCache.set(sourceUrl, {
+                loaded: false,
+                cities: [],
+                promise: fetchPromise,
+            });
+
+            return fetchPromise;
+        };
+
+        const renderOptions = (input, datalist, minimumLength, cities) => {
+            datalist.innerHTML = '';
+            if (!Array.isArray(cities) || cities.length === 0) {
+                return;
+            }
+
+            const normalizedQuery = String(input.value || '').trim().toLowerCase();
+            if (normalizedQuery.length < minimumLength) {
+                return;
+            }
+
+            const fragment = document.createDocumentFragment();
+            let rendered = 0;
+
+            cities.some((entry) => {
+                if (!entry || typeof entry.value !== 'string' || entry.value === '') {
+                    return false;
+                }
+
+                const haystack = typeof entry.search === 'string' && entry.search !== ''
+                    ? entry.search
+                    : entry.value.toLowerCase();
+
+                if (!haystack.includes(normalizedQuery)) {
+                    return false;
+                }
+
+                const option = document.createElement('option');
+                option.value = entry.value;
+                fragment.appendChild(option);
+                rendered += 1;
+                return rendered >= 12;
+            });
+
+            if (fragment.childNodes.length > 0) {
+                datalist.appendChild(fragment);
+            }
+        };
+
+        inputs.forEach((input) => {
+            const listId = input.getAttribute('list');
+            if (!listId) {
+                return;
+            }
+
+            const datalist = document.getElementById(listId);
+            if (!datalist) {
+                return;
+            }
+
+            const minimumLength = parseInt(input.dataset.cityAutocompleteMin || '2', 10);
+            const sourceUrl = input.dataset.cityAutocompleteSource || 'assets/data/italian_cities.json';
+
+            const handleRender = () => {
+                const cacheEntry = sourceCache.get(sourceUrl);
+                const cities = cacheEntry && cacheEntry.loaded ? cacheEntry.cities : [];
+                renderOptions(input, datalist, minimumLength, cities);
+            };
+
+            const debouncedInput = debounce(() => {
+                ensureData(sourceUrl).then(() => {
+                    handleRender();
+                });
+            }, 150);
+
+            input.addEventListener('focus', () => {
+                ensureData(sourceUrl).then(() => {
+                    handleRender();
+                });
+            });
+
+            input.addEventListener('input', () => {
+                debouncedInput();
+            });
+
+            if (input.value.trim() !== '') {
+                ensureData(sourceUrl).then(() => {
+                    handleRender();
+                });
+            }
+        });
+    };
+
     initProfileSearchInstant();
     initNavbarProfileSearch();
+    initCityAutocomplete();
 
     const composer = document.querySelector('[data-community-composer]');
     if (composer) {

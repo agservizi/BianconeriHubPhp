@@ -1164,11 +1164,41 @@ function ensureUserProfilesTable(PDO $pdo): void
             PRIMARY KEY (user_id),
             CONSTRAINT user_profiles_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+        $checked = true;
     } catch (PDOException $exception) {
         error_log('[BianconeriHub] Unable to ensure user_profiles table: ' . $exception->getMessage());
+        $checked = false;
+    }
+}
+
+function userProfilesTableAvailable(?PDO $connection = null): bool
+{
+    static $cache;
+
+    if ($cache !== null) {
+        return $cache;
     }
 
-    $checked = true;
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        $cache = false;
+        return $cache;
+    }
+
+    try {
+        $pdo->query('SELECT user_id FROM user_profiles LIMIT 1');
+        $cache = true;
+    } catch (PDOException $exception) {
+        $sqlState = $exception->getCode();
+        if ($sqlState === '42S02' || stripos($exception->getMessage(), 'user_profiles') !== false) {
+            $cache = false;
+        } else {
+            error_log('[BianconeriHub] Failed checking user_profiles availability: ' . $exception->getMessage());
+            $cache = false;
+        }
+    }
+
+    return $cache;
 }
 
 function getCommunityFollowersCount(int $userId): int
@@ -1344,6 +1374,285 @@ function deleteProfileImage(?string $relativePath): void
     }
 }
 
+function getProfileImageProcessingLimits(string $type): array
+{
+    if ($type === 'cover') {
+        return ['max_width' => 1920, 'max_height' => 1080];
+    }
+
+    return ['max_width' => 1024, 'max_height' => 1024];
+}
+
+function loadProfileImageResource(string $path, string $mime)
+{
+    switch ($mime) {
+        case 'image/jpeg':
+            return function_exists('imagecreatefromjpeg') ? @imagecreatefromjpeg($path) : null;
+        case 'image/png':
+            return function_exists('imagecreatefrompng') ? @imagecreatefrompng($path) : null;
+        case 'image/webp':
+            return function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($path) : null;
+        case 'image/gif':
+            return function_exists('imagecreatefromgif') ? @imagecreatefromgif($path) : null;
+        default:
+            return null;
+    }
+}
+
+function applyExifOrientationToImage($image, string $path)
+{
+    if (!function_exists('exif_read_data')) {
+        return $image;
+    }
+
+    $exif = @exif_read_data($path);
+    if (!$exif || !isset($exif['Orientation'])) {
+        return $image;
+    }
+
+    $orientation = (int) $exif['Orientation'];
+    if ($orientation === 1) {
+        return $image;
+    }
+
+    $rotate = null;
+    $flip = null;
+
+    switch ($orientation) {
+        case 2:
+            $flip = IMG_FLIP_HORIZONTAL;
+            break;
+        case 3:
+            $rotate = 180;
+            break;
+        case 4:
+            $flip = IMG_FLIP_VERTICAL;
+            break;
+        case 5:
+            $rotate = -90;
+            $flip = IMG_FLIP_HORIZONTAL;
+            break;
+        case 6:
+            $rotate = -90;
+            break;
+        case 7:
+            $rotate = -90;
+            $flip = IMG_FLIP_VERTICAL;
+            break;
+        case 8:
+            $rotate = 90;
+            break;
+    }
+
+    if ($rotate !== null && function_exists('imagerotate')) {
+        $rotated = @imagerotate($image, $rotate, 0);
+        if ($rotated !== false && $rotated !== null) {
+            imagedestroy($image);
+            $image = $rotated;
+        }
+    }
+
+    if ($flip !== null && function_exists('imageflip')) {
+        @imageflip($image, $flip);
+    }
+
+    return $image;
+}
+
+function determineProfileImageFormats(string $mime): array
+{
+    $formats = [];
+    $supportsWebp = function_exists('imagewebp');
+    $supportsJpeg = function_exists('imagejpeg');
+    $supportsPng = function_exists('imagepng');
+    $hasAlphaSource = in_array($mime, ['image/png', 'image/gif', 'image/webp'], true);
+
+    if ($supportsWebp) {
+        $formats[] = 'webp';
+    }
+
+    if (!$hasAlphaSource && $supportsJpeg) {
+        $formats[] = 'jpeg';
+    }
+
+    if ($supportsPng) {
+        $formats[] = 'png';
+    }
+
+    if ($supportsJpeg && !in_array('jpeg', $formats, true)) {
+        $formats[] = 'jpeg';
+    }
+
+    return array_values(array_unique($formats));
+}
+
+function saveOptimizedProfileImage($sourceImage, int $sourceWidth, int $sourceHeight, string $destination, string $format, float $scaleLimit, int $maxBytes): array
+{
+    $scale = $scaleLimit > 0 && is_finite($scaleLimit) ? min(1.0, max($scaleLimit, 0.05)) : 1.0;
+    $quality = $format === 'jpeg' ? 86 : ($format === 'webp' ? 82 : 90);
+    $minQuality = $format === 'jpeg' ? 65 : ($format === 'webp' ? 55 : 60);
+
+    for ($attempt = 0; $attempt < 7; $attempt++) {
+        $targetWidth = max(1, (int) round($sourceWidth * $scale));
+        $targetHeight = max(1, (int) round($sourceHeight * $scale));
+
+        $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
+        if ($format === 'jpeg') {
+            imagealphablending($canvas, true);
+            $background = imagecolorallocate($canvas, 16, 16, 16);
+            imagefilledrectangle($canvas, 0, 0, $targetWidth, $targetHeight, $background);
+        } else {
+            imagealphablending($canvas, false);
+            $transparent = imagecolorallocatealpha($canvas, 0, 0, 0, 127);
+            imagefilledrectangle($canvas, 0, 0, $targetWidth, $targetHeight, $transparent);
+            imagesavealpha($canvas, true);
+        }
+
+        imagecopyresampled($canvas, $sourceImage, 0, 0, 0, 0, $targetWidth, $targetHeight, $sourceWidth, $sourceHeight);
+
+        $tempPath = $destination . '.tmp';
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+
+        $saveResult = false;
+        if ($format === 'webp' && function_exists('imagewebp')) {
+            if (function_exists('imagepalettetotruecolor')) {
+                imagepalettetotruecolor($canvas);
+            }
+            $saveResult = imagewebp($canvas, $tempPath, $quality);
+        } elseif ($format === 'jpeg' && function_exists('imagejpeg')) {
+            $saveResult = imagejpeg($canvas, $tempPath, $quality);
+        } elseif ($format === 'png' && function_exists('imagepng')) {
+            if (function_exists('imagepalettetotruecolor')) {
+                imagepalettetotruecolor($canvas);
+            }
+            $saveResult = imagepng($canvas, $tempPath, 9);
+        }
+
+        imagedestroy($canvas);
+
+        if (!$saveResult || !is_file($tempPath)) {
+            @unlink($tempPath);
+            return ['success' => false, 'message' => 'Impossibile salvare l\'immagine elaborata.'];
+        }
+
+        clearstatcache(true, $tempPath);
+        $savedSize = filesize($tempPath);
+        if ($savedSize > 0 && $savedSize <= $maxBytes) {
+            $moved = @rename($tempPath, $destination);
+            if (!$moved) {
+                $moved = @copy($tempPath, $destination);
+                @unlink($tempPath);
+            }
+
+            if ($moved) {
+                return ['success' => true];
+            }
+
+            return ['success' => false, 'message' => 'Impossibile salvare l\'immagine elaborata.'];
+        }
+
+        @unlink($tempPath);
+
+        if ($format === 'png') {
+            $scale *= 0.85;
+            if ($scale < 0.35) {
+                break;
+            }
+            continue;
+        }
+
+        if ($quality > $minQuality) {
+            $quality = max($minQuality, $quality - 8);
+            continue;
+        }
+
+        $scale *= 0.85;
+        if ($scale < 0.35) {
+            break;
+        }
+    }
+
+    return ['success' => false, 'message' => 'Impossibile ridurre le dimensioni dell\'immagine sotto i limiti consentiti.'];
+}
+
+function optimiseProfileImageWithGd(array $file, string $type, int $userId, string $mime, string $directory): array
+{
+    if (!extension_loaded('gd') || !function_exists('imagecreatetruecolor')) {
+        return ['success' => false, 'message' => 'L\'elaborazione immagini non è disponibile sul server.'];
+    }
+
+    $sourceImage = loadProfileImageResource($file['tmp_name'], $mime);
+    if (!$sourceImage) {
+        return ['success' => false, 'message' => 'Immagine non supportata.'];
+    }
+
+    if (function_exists('imagepalettetotruecolor')) {
+        imagepalettetotruecolor($sourceImage);
+    }
+
+    if ($mime === 'image/jpeg') {
+        $sourceImage = applyExifOrientationToImage($sourceImage, $file['tmp_name']);
+    }
+
+    $sourceWidth = imagesx($sourceImage);
+    $sourceHeight = imagesy($sourceImage);
+    if ($sourceWidth <= 0 || $sourceHeight <= 0) {
+        imagedestroy($sourceImage);
+        return ['success' => false, 'message' => 'Impossibile leggere le dimensioni dell\'immagine.'];
+    }
+
+    $limits = getProfileImageProcessingLimits($type);
+    $scaleLimit = min(
+        $limits['max_width'] / max($sourceWidth, 1),
+        $limits['max_height'] / max($sourceHeight, 1),
+        1.0
+    );
+    if ($scaleLimit <= 0 || !is_finite($scaleLimit)) {
+        $scaleLimit = 1.0;
+    }
+
+    try {
+        $random = bin2hex(random_bytes(8));
+    } catch (Throwable $exception) {
+        $random = uniqid('img', true);
+    }
+
+    $formats = determineProfileImageFormats($mime);
+    if (empty($formats)) {
+        imagedestroy($sourceImage);
+        return ['success' => false, 'message' => 'Nessun formato di salvataggio disponibile.'];
+    }
+
+    $baseName = $type === 'cover' ? 'cover' : 'avatar';
+    $subDirectory = $type === 'cover' ? 'covers' : 'avatars';
+    $maxBytes = 7 * 1024 * 1024;
+    $lastError = 'Impossibile ottimizzare l\'immagine caricata.';
+
+    foreach ($formats as $format) {
+        $extension = $format === 'jpeg' ? 'jpg' : $format;
+        $filename = sprintf('%s-%d-%s.%s', $baseName, $userId, $random, $extension);
+        $destination = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename;
+
+        $result = saveOptimizedProfileImage($sourceImage, $sourceWidth, $sourceHeight, $destination, $format, $scaleLimit, $maxBytes);
+
+        if ($result['success']) {
+            imagedestroy($sourceImage);
+            return [
+                'success' => true,
+                'path' => 'uploads/profile/' . $subDirectory . '/' . $filename,
+            ];
+        }
+
+        $lastError = $result['message'] ?? $lastError;
+    }
+
+    imagedestroy($sourceImage);
+
+    return ['success' => false, 'message' => $lastError];
+}
+
 function storeProfileImageUpload(?array $file, string $type, int $userId): array
 {
     if (!is_array($file) || !isset($file['error'])) {
@@ -1359,8 +1668,13 @@ function storeProfileImageUpload(?array $file, string $type, int $userId): array
     }
 
     $size = (int) ($file['size'] ?? 0);
-    if ($size <= 0 || $size > 7 * 1024 * 1024) {
-        return ['success' => false, 'message' => 'L\'immagine deve pesare meno di 7MB.'];
+    if ($size <= 0) {
+        return ['success' => false, 'message' => 'File vuoto non valido.'];
+    }
+
+    $absoluteLimit = 32 * 1024 * 1024;
+    if ($size > $absoluteLimit) {
+        return ['success' => false, 'message' => 'L\'immagine è troppo pesante (limite 32MB).'];
     }
 
     $mime = '';
@@ -1385,6 +1699,24 @@ function storeProfileImageUpload(?array $file, string $type, int $userId): array
         return ['success' => false, 'message' => 'Formato immagine non supportato.'];
     }
 
+    $directory = getProfileUploadDirectory($type);
+    $maxStoredBytes = 7 * 1024 * 1024;
+    $lastOptimizationError = null;
+
+    $optimized = optimiseProfileImageWithGd($file, $type, $userId, $mime, $directory);
+    if ($optimized['success']) {
+        return [
+            'success' => true,
+            'path' => str_replace(['\\'], '/', $optimized['path']),
+        ];
+    }
+
+    $lastOptimizationError = $optimized['message'] ?? null;
+
+    if ($size > $maxStoredBytes) {
+        return ['success' => false, 'message' => $lastOptimizationError ?: 'Impossibile ottimizzare automaticamente l\'immagine caricata. Riducila manualmente e riprova.'];
+    }
+
     try {
         $random = bin2hex(random_bytes(8));
     } catch (Throwable $exception) {
@@ -1392,7 +1724,6 @@ function storeProfileImageUpload(?array $file, string $type, int $userId): array
     }
 
     $extension = $allowed[$mime];
-    $directory = getProfileUploadDirectory($type);
     $filename = sprintf('%s-%d-%s.%s', $type === 'cover' ? 'cover' : 'avatar', $userId, $random, $extension);
     $destination = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename;
 
@@ -1446,6 +1777,10 @@ function updateUserAvatar(int $userId, ?array $file): array
 
     if (!empty($user['avatar_url'])) {
         deleteProfileImage($user['avatar_url']);
+    }
+
+    if (isset($_SESSION['bh_current_user']) && (int) ($_SESSION['bh_current_user']['id'] ?? 0) === $userId) {
+        $_SESSION['bh_current_user']['avatar_url'] = $path;
     }
 
     return ['success' => true, 'path' => $path];
@@ -2028,7 +2363,7 @@ if (!function_exists('findUserByUsername')) {
         }
 
         try {
-            $statement = $pdo->prepare('SELECT id, username, email, password_hash, badge, created_at FROM users WHERE LOWER(username) = LOWER(:username) LIMIT 1');
+            $statement = $pdo->prepare('SELECT id, username, email, password_hash, badge, avatar_url, created_at, updated_at FROM users WHERE LOWER(username) = LOWER(:username) LIMIT 1');
             $statement->execute(['username' => $username]);
             $user = $statement->fetch();
 
@@ -2038,6 +2373,9 @@ if (!function_exists('findUserByUsername')) {
 
             $user['id'] = (int) ($user['id'] ?? 0);
             $user['created_at'] = normalizeToTimestamp($user['created_at'] ?? time());
+            if (isset($user['updated_at'])) {
+                $user['updated_at'] = normalizeToTimestamp($user['updated_at']);
+            }
 
             return $user;
         } catch (PDOException $exception) {
@@ -2140,6 +2478,7 @@ function attemptLogin(string $username, string $password): array
         'username' => $user['username'],
         'email' => $user['email'],
         'badge' => $user['badge'] ?? 'Tifoso',
+        'avatar_url' => $user['avatar_url'] ?? null,
         'login_time' => time(),
     ];
 
@@ -2161,7 +2500,34 @@ function isUserLoggedIn(): bool
 
 function getLoggedInUser(): ?array
 {
-    return $_SESSION['bh_current_user'] ?? null;
+    if (!isset($_SESSION['bh_current_user'])) {
+        return null;
+    }
+
+    $sessionUser = $_SESSION['bh_current_user'];
+    $userId = (int) ($sessionUser['id'] ?? 0);
+    if ($userId <= 0) {
+        return null;
+    }
+
+    static $cachedUser = null;
+    static $cachedKey = null;
+
+    $cacheKey = $userId . ':' . ($sessionUser['login_time'] ?? 0);
+    if ($cachedUser !== null && $cachedKey === $cacheKey) {
+        return $cachedUser;
+    }
+
+    $userRecord = findUserById($userId);
+    if (is_array($userRecord)) {
+        $sessionUser = array_merge($sessionUser, $userRecord);
+        $_SESSION['bh_current_user'] = $sessionUser;
+    }
+
+    $cachedUser = $sessionUser;
+    $cachedKey = $cacheKey;
+
+    return $sessionUser;
 }
 
 function isWebPushConfigured(): bool
@@ -2520,6 +2886,62 @@ function getCommunityFollowingCount(int $followerId, ?PDO $connection = null): i
     return 0;
 }
 
+function getPushSubscriptionsForUsers(array $userIds, ?PDO $connection = null): array
+{
+    $uniqueIds = [];
+    foreach ($userIds as $userId) {
+        $intId = (int) $userId;
+        if ($intId > 0) {
+            $uniqueIds[$intId] = $intId;
+        }
+    }
+
+    if (empty($uniqueIds)) {
+        return [];
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($uniqueIds), '?'));
+
+    try {
+        $statement = $pdo->prepare('SELECT id, user_id, endpoint, public_key, auth_token, content_encoding, scope FROM user_push_subscriptions WHERE user_id IN (' . $placeholders . ')');
+        $statement->execute(array_values($uniqueIds));
+
+        $subscriptions = [];
+        foreach ($statement as $row) {
+            $userId = (int) ($row['user_id'] ?? 0);
+            $id = (int) ($row['id'] ?? 0);
+            if ($userId <= 0 || $id <= 0) {
+                continue;
+            }
+
+            if (!isset($subscriptions[$userId])) {
+                $subscriptions[$userId] = [];
+            }
+
+            $subscriptions[$userId][] = [
+                'id' => $id,
+                'user_id' => $userId,
+                'endpoint' => $row['endpoint'] ?? '',
+                'public_key' => $row['public_key'] ?? '',
+                'auth_token' => $row['auth_token'] ?? '',
+                'content_encoding' => $row['content_encoding'] ?? 'aes128gcm',
+                'scope' => $row['scope'] ?? 'global',
+            ];
+        }
+
+        return $subscriptions;
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load push subscriptions for users: ' . $exception->getMessage());
+    }
+
+    return [];
+}
+
 function getPushSubscriptionsForPost(int $authorId): array
 {
     if ($authorId <= 0) {
@@ -2657,6 +3079,46 @@ function truncateForNotification(string $text, int $limit = 140): string
     return rtrim(mb_substr($trimmed, 0, max(1, $limit - 1))) . '…';
 }
 
+function buildCommunityMentionNotificationPayload(array $post, array $recipient): ?array
+{
+    global $baseUrl;
+
+    $author = $post['author'] ?? 'Membro';
+    $title = $author . ' ti ha menzionato';
+
+    $excerpt = sanitizeFeedBody($post['content'] ?? '');
+    $body = truncateForNotification($excerpt !== '' ? $excerpt : 'Ti ha menzionato in un post della community.');
+
+    $relativeUrl = '?page=community#post-' . $post['id'];
+    $url = $baseUrl !== '' ? rtrim($baseUrl, '/') . '/' . ltrim($relativeUrl, '/') : $relativeUrl;
+
+    $recipientId = isset($recipient['id']) ? (int) $recipient['id'] : 0;
+    if ($recipientId <= 0) {
+        return null;
+    }
+
+    $payload = [
+        'title' => $title,
+        'body' => $body,
+        'tag' => 'community-mention-' . $post['id'] . '-' . $recipientId,
+        'data' => [
+            'url' => $url,
+            'post_id' => $post['id'],
+            'author' => $author,
+            'type' => 'mention',
+        ],
+    ];
+
+    $iconPath = trim((string) env('PUSH_ICON_PATH', ''));
+    if ($iconPath !== '') {
+        $resolvedIcon = $baseUrl !== '' ? rtrim($baseUrl, '/') . '/' . ltrim($iconPath, '/') : $iconPath;
+        $payload['icon'] = $resolvedIcon;
+        $payload['badge'] = $resolvedIcon;
+    }
+
+    return $payload;
+}
+
 function buildCommunityPostNotificationPayload(array $post): ?array
 {
     global $baseUrl;
@@ -2768,6 +3230,142 @@ function notifyCommunityPostPublished(int $postId): void
     }
 }
 
+function notifyCommunityPostMentions(int $postId): void
+{
+    if ($postId <= 0 || !isWebPushConfigured()) {
+        return;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo || !communityPostMentionsTableAvailable($pdo)) {
+        return;
+    }
+
+    $post = findCommunityPostForNotification($postId);
+    if (!$post) {
+        return;
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT m.id, m.mentioned_user_id, u.username FROM community_post_mentions m INNER JOIN users u ON u.id = m.mentioned_user_id WHERE m.post_id = :post_id AND m.notified_at IS NULL');
+        $statement->execute(['post_id' => $postId]);
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load mentions for notification: ' . $exception->getMessage());
+        return;
+    }
+
+    $mentions = [];
+    while ($row = $statement->fetch()) {
+        $mentionId = (int) ($row['id'] ?? 0);
+        $mentionedUserId = (int) ($row['mentioned_user_id'] ?? 0);
+        if ($mentionId <= 0 || $mentionedUserId <= 0 || $mentionedUserId === $post['user_id']) {
+            continue;
+        }
+
+        $mentions[] = [
+            'id' => $mentionId,
+            'user_id' => $mentionedUserId,
+            'username' => $row['username'] ?? '',
+        ];
+    }
+
+    if (empty($mentions)) {
+        return;
+    }
+
+    $userIds = [];
+    foreach ($mentions as $mention) {
+        $userIds[$mention['user_id']] = $mention['user_id'];
+    }
+
+    $subscriptionsByUser = getPushSubscriptionsForUsers(array_values($userIds), $pdo);
+
+    $webPush = getWebPushClient();
+    if (!$webPush) {
+        markCommunityMentionsAsNotified($pdo, array_column($mentions, 'id'));
+        return;
+    }
+
+    $subscriptionClass = 'Minishlink\WebPush\Subscription';
+    if (!class_exists($subscriptionClass)) {
+        markCommunityMentionsAsNotified($pdo, array_column($mentions, 'id'));
+        return;
+    }
+
+    $queueMethod = method_exists($webPush, 'queueNotification') ? 'queueNotification' : (method_exists($webPush, 'sendNotification') ? 'sendNotification' : null);
+    if ($queueMethod === null) {
+        markCommunityMentionsAsNotified($pdo, array_column($mentions, 'id'));
+        return;
+    }
+
+    $subscriptionMap = [];
+    $notifiedMentionIds = [];
+    $payloadCache = [];
+
+    foreach ($mentions as $mention) {
+        $userSubscriptions = $subscriptionsByUser[$mention['user_id']] ?? [];
+        if (empty($userSubscriptions)) {
+            $notifiedMentionIds[] = $mention['id'];
+            continue;
+        }
+
+        if (!array_key_exists($mention['user_id'], $payloadCache)) {
+            $payload = buildCommunityMentionNotificationPayload($post, [
+                'id' => $mention['user_id'],
+                'username' => $mention['username'],
+            ]);
+
+            $payloadCache[$mention['user_id']] = is_array($payload)
+                ? json_encode($payload, JSON_UNESCAPED_UNICODE)
+                : null;
+        }
+
+        $payloadJson = $payloadCache[$mention['user_id']];
+        if (!is_string($payloadJson) || $payloadJson === '') {
+            $notifiedMentionIds[] = $mention['id'];
+            continue;
+        }
+
+        foreach ($userSubscriptions as $subscription) {
+            if (($subscription['endpoint'] ?? '') === '' || ($subscription['public_key'] ?? '') === '' || ($subscription['auth_token'] ?? '') === '') {
+                continue;
+            }
+
+            try {
+                $subscriptionObject = $subscriptionClass::create([
+                    'endpoint' => $subscription['endpoint'],
+                    'publicKey' => $subscription['public_key'],
+                    'authToken' => $subscription['auth_token'],
+                    'contentEncoding' => $subscription['content_encoding'] ?: 'aes128gcm',
+                ]);
+
+                $webPush->{$queueMethod}($subscriptionObject, $payloadJson);
+                $subscriptionMap[$subscription['endpoint']] = $subscription['id'];
+            } catch (\Throwable $exception) {
+                error_log('[BianconeriHub] Failed to queue mention notification: ' . $exception->getMessage());
+            }
+        }
+
+        $notifiedMentionIds[] = $mention['id'];
+    }
+
+    foreach ($webPush->flush() as $report) {
+        $endpoint = $report->getEndpoint();
+
+        if ($report->isSubscriptionExpired() && isset($subscriptionMap[$endpoint])) {
+            removePushSubscriptionById($subscriptionMap[$endpoint]);
+        }
+
+        if (!$report->isSuccess()) {
+            error_log('[BianconeriHub] Push notification delivery failed: ' . $report->getReason());
+        }
+    }
+
+    if (!empty($notifiedMentionIds)) {
+        markCommunityMentionsAsNotified($pdo, $notifiedMentionIds);
+    }
+}
+
 function publishDueCommunityPosts(): int
 {
     $pdo = getDatabaseConnection();
@@ -2815,7 +3413,17 @@ function publishDueCommunityPosts(): int
     }
 
     foreach ($postIds as $postId) {
-        notifyCommunityPostPublished($postId);
+        try {
+            notifyCommunityPostPublished($postId);
+        } catch (\Throwable $exception) {
+            error_log('[BianconeriHub] Failed to send publication notification for post ' . $postId . ': ' . $exception->getMessage());
+        }
+
+        try {
+            notifyCommunityPostMentions($postId);
+        } catch (\Throwable $exception) {
+            error_log('[BianconeriHub] Failed to send mention notification for post ' . $postId . ': ' . $exception->getMessage());
+        }
     }
 
     return count($postIds);
@@ -2929,7 +3537,7 @@ function getUsersByUsernames(array $usernames): array
     $placeholders = implode(',', array_fill(0, count($unique), '?'));
 
     try {
-        $statement = $pdo->prepare('SELECT username, badge FROM users WHERE LOWER(username) IN (' . $placeholders . ')');
+        $statement = $pdo->prepare('SELECT id, username, badge FROM users WHERE LOWER(username) IN (' . $placeholders . ')');
         $statement->execute(array_keys($unique));
 
         $map = [];
@@ -2938,7 +3546,9 @@ function getUsersByUsernames(array $usernames): array
             if ($username === '') {
                 continue;
             }
+
             $map[strtolower($username)] = [
+                'id' => (int) ($row['id'] ?? 0),
                 'username' => $username,
                 'badge' => $row['badge'] ?? 'Tifoso',
             ];
@@ -3087,12 +3697,26 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
         return [];
     }
 
+    ensureUserProfilesTable($pdo);
+    $userProfilesAvailable = userProfilesTableAvailable($pdo);
+
     $offset = max(0, $offset);
     $limit = max(1, min($limit, 50));
 
     $extendedSchema = communityPostsExtendedSchemaAvailable($pdo);
     $currentUser = getLoggedInUser();
     $currentUserId = isset($currentUser['id']) ? (int) $currentUser['id'] : 0;
+
+    $authorColumns = 'u.username,
+                    u.badge,
+                    u.avatar_url AS author_avatar_url';
+    if ($userProfilesAvailable) {
+        $authorColumns .= ',
+                    up.cover_path AS author_cover_path';
+    } else {
+        $authorColumns .= ',
+                    NULL AS author_cover_path';
+    }
 
     if ($extendedSchema) {
     $sql = 'SELECT
@@ -3109,8 +3733,7 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
             p.created_at,
             p.published_at,
             p.status,
-                    u.username,
-                    u.badge,
+                    ' . $authorColumns . ',
                     (SELECT COUNT(*) FROM community_post_comments c WHERE c.post_id = p.id) AS comments_count,
                     (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "like") AS likes_count,
                     (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "support") AS supports_count';
@@ -3122,8 +3745,7 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                     p.content_type,
                     p.media_url,
                     p.created_at,
-                    u.username,
-                    u.badge,
+                    ' . $authorColumns . ',
                     (SELECT COUNT(*) FROM community_post_comments c WHERE c.post_id = p.id) AS comments_count,
                     (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "like") AS likes_count,
                     (SELECT COUNT(*) FROM community_post_reactions r WHERE r.post_id = p.id AND r.reaction_type = "support") AS supports_count';
@@ -3149,6 +3771,11 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
 
     $sql .= ' FROM community_posts p
               INNER JOIN users u ON u.id = p.user_id';
+
+    if ($userProfilesAvailable) {
+        $sql .= '
+              LEFT JOIN user_profiles up ON up.user_id = u.id';
+    }
 
     if ($extendedSchema) {
         $sql .= ' WHERE (p.status = "published" OR p.status IS NULL OR p.status = "")
@@ -3218,6 +3845,8 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                 'has_supported' => ((int) ($row['has_supported'] ?? 0)) === 1,
                 'viewer_can_follow' => $canFollow,
                 'is_following_author' => $canFollow ? $isFollowingAuthor : false,
+                'author_avatar_url' => trim((string) ($row['author_avatar_url'] ?? '')),
+                'author_cover_path' => trim((string) ($row['author_cover_path'] ?? '')),
             ];
         }
 
@@ -4108,6 +4737,117 @@ function communityCommentReactionsTableAvailable(?PDO $connection = null): bool
     return $cache;
 }
 
+function communityPostMentionsTableAvailable(?PDO $connection = null): bool
+{
+    static $cache;
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        $cache = false;
+        return $cache;
+    }
+
+    try {
+        $pdo->query('SELECT 1 FROM community_post_mentions LIMIT 1');
+        $cache = true;
+    } catch (PDOException $exception) {
+        $sqlState = $exception->getCode();
+        if ($sqlState === '42S02' || stripos($exception->getMessage(), 'community_post_mentions') !== false) {
+            $cache = false;
+        } else {
+            error_log('[BianconeriHub] Failed checking community_post_mentions availability: ' . $exception->getMessage());
+            $cache = false;
+        }
+    }
+
+    return $cache;
+}
+
+function replaceCommunityPostMentions(PDO $pdo, int $postId, int $authorId, array $mentionUserIds): void
+{
+    if ($postId <= 0 || !communityPostMentionsTableAvailable($pdo)) {
+        return;
+    }
+
+    $uniqueIds = [];
+    foreach ($mentionUserIds as $userId) {
+        $intId = (int) $userId;
+        if ($intId > 0 && $intId !== $authorId) {
+            $uniqueIds[$intId] = $intId;
+        }
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT id, mentioned_user_id FROM community_post_mentions WHERE post_id = :post_id');
+        $statement->execute(['post_id' => $postId]);
+
+        $existing = [];
+        foreach ($statement as $row) {
+            $mentionedId = (int) ($row['mentioned_user_id'] ?? 0);
+            if ($mentionedId <= 0) {
+                continue;
+            }
+
+            $existing[$mentionedId] = (int) ($row['id'] ?? 0);
+        }
+
+        $toDelete = [];
+        foreach ($existing as $mentionedId => $rowId) {
+            if (!isset($uniqueIds[$mentionedId])) {
+                $toDelete[] = $rowId;
+            }
+        }
+
+        if (!empty($toDelete)) {
+            $placeholders = implode(',', array_fill(0, count($toDelete), '?'));
+            $delete = $pdo->prepare('DELETE FROM community_post_mentions WHERE id IN (' . $placeholders . ')');
+            $delete->execute($toDelete);
+        }
+
+        $toInsert = array_diff(array_values($uniqueIds), array_keys($existing));
+        if (!empty($toInsert)) {
+            $insert = $pdo->prepare('INSERT INTO community_post_mentions (post_id, author_id, mentioned_user_id) VALUES (:post_id, :author_id, :mentioned_user_id)');
+            foreach ($toInsert as $userId) {
+                $insert->execute([
+                    'post_id' => $postId,
+                    'author_id' => $authorId,
+                    'mentioned_user_id' => $userId,
+                ]);
+            }
+        }
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to sync community post mentions: ' . $exception->getMessage());
+    }
+}
+
+function markCommunityMentionsAsNotified(PDO $pdo, array $mentionIds): void
+{
+    $uniqueIds = [];
+    foreach ($mentionIds as $mentionId) {
+        $intId = (int) $mentionId;
+        if ($intId > 0) {
+            $uniqueIds[$intId] = $intId;
+        }
+    }
+
+    if (empty($uniqueIds)) {
+        return;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($uniqueIds), '?'));
+
+    try {
+        $statement = $pdo->prepare('UPDATE community_post_mentions SET notified_at = NOW() WHERE id IN (' . $placeholders . ')');
+        $statement->execute(array_values($uniqueIds));
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to mark community mentions as notified: ' . $exception->getMessage());
+    }
+}
+
 function getCommunityPollVoteSnapshot(array $postIds, int $viewerId = 0): array
 {
     $uniqueIds = [];
@@ -4201,6 +4941,18 @@ function getCommunityPollVoteSnapshot(array $postIds, int $viewerId = 0): array
 
 function addCommunityPost(int $userId, array $input, array $files = []): array
 {
+    global $appDebug;
+    $lastExceptionMessage = null;
+
+    if ($userId <= 0) {
+        return ['success' => false, 'message' => 'Sessione scaduta. Effettua nuovamente l\'accesso e riprova.'];
+    }
+
+    $author = findUserById($userId);
+    if (!$author) {
+        return ['success' => false, 'message' => 'Utente non trovato. Effettua nuovamente l\'accesso e riprova.'];
+    }
+
     $message = trim((string) ($input['message'] ?? ''));
     $mode = strtolower((string) ($input['composer_mode'] ?? 'text'));
     $allowedModes = ['text', 'photo', 'poll', 'story'];
@@ -4236,6 +4988,20 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         $optionText = trim((string) $option);
         if ($optionText !== '') {
             $pollOptions[] = mb_substr($optionText, 0, 120);
+        }
+    }
+
+    $mentionedUserIds = [];
+    if ($message !== '') {
+        $mentionUsernames = extractMentionsFromText($message);
+        if (!empty($mentionUsernames)) {
+            $mentionLookup = getUsersByUsernames($mentionUsernames);
+            foreach ($mentionLookup as $mentionMeta) {
+                $mentionedId = (int) ($mentionMeta['id'] ?? 0);
+                if ($mentionedId > 0 && $mentionedId !== $userId) {
+                    $mentionedUserIds[$mentionedId] = $mentionedId;
+                }
+            }
         }
     }
 
@@ -4276,6 +5042,21 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
     $pdo = getDatabaseConnection();
     if (!$pdo) {
         return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
+    }
+
+    $extendedSchema = communityPostsExtendedSchemaAvailable($pdo);
+    if (!$extendedSchema) {
+        if ($action !== 'publish') {
+            return ['success' => false, 'message' => 'La programmazione dei post non è disponibile sul database corrente.'];
+        }
+
+        if ($mode === 'poll') {
+            return ['success' => false, 'message' => 'I sondaggi richiedono un aggiornamento del database.'];
+        }
+
+        if ($mode === 'story') {
+            return ['success' => false, 'message' => 'Le storie richiedono un aggiornamento del database.'];
+        }
     }
 
     $mediaTableAvailable = communityMediaTableAvailable($pdo);
@@ -4521,38 +5302,57 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
         $pdo->beginTransaction();
 
         if ($isUpdating) {
-            $update = $pdo->prepare('UPDATE community_posts SET content = :content, content_type = :content_type, poll_question = :poll_question, poll_options = :poll_options, story_title = :story_title, story_caption = :story_caption, story_credit = :story_credit, status = :status, scheduled_for = :scheduled_for, published_at = :published_at, updated_at = NOW() WHERE id = :id AND user_id = :user_id');
-            $update->execute([
-                'content' => $message,
-                'content_type' => $finalContentType,
-                'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
-                'poll_options' => $pollOptionsJson,
-                'story_title' => $storyTitle !== '' ? $storyTitle : null,
-                'story_caption' => $storyCaption !== '' ? $storyCaption : null,
-                'story_credit' => $storyCredit !== '' ? $storyCredit : null,
-                'status' => $status,
-                'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
-                'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
-                'id' => $existingPost['id'],
-                'user_id' => $userId,
-            ]);
+            if ($extendedSchema) {
+                $update = $pdo->prepare('UPDATE community_posts SET content = :content, content_type = :content_type, poll_question = :poll_question, poll_options = :poll_options, story_title = :story_title, story_caption = :story_caption, story_credit = :story_credit, status = :status, scheduled_for = :scheduled_for, published_at = :published_at, updated_at = NOW() WHERE id = :id AND user_id = :user_id');
+                $update->execute([
+                    'content' => $message,
+                    'content_type' => $finalContentType,
+                    'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
+                    'poll_options' => $pollOptionsJson,
+                    'story_title' => $storyTitle !== '' ? $storyTitle : null,
+                    'story_caption' => $storyCaption !== '' ? $storyCaption : null,
+                    'story_credit' => $storyCredit !== '' ? $storyCredit : null,
+                    'status' => $status,
+                    'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
+                    'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
+                    'id' => $existingPost['id'],
+                    'user_id' => $userId,
+                ]);
+            } else {
+                $update = $pdo->prepare('UPDATE community_posts SET content = :content, content_type = :content_type, media_url = NULL, updated_at = NOW() WHERE id = :id AND user_id = :user_id');
+                $update->execute([
+                    'content' => $message,
+                    'content_type' => $finalContentType,
+                    'id' => $existingPost['id'],
+                    'user_id' => $userId,
+                ]);
+            }
 
             $postId = $existingPost['id'];
         } else {
-            $insert = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, poll_question, poll_options, story_title, story_caption, story_credit, status, scheduled_for, published_at) VALUES (:user_id, :content, :content_type, :poll_question, :poll_options, :story_title, :story_caption, :story_credit, :status, :scheduled_for, :published_at)');
-            $insert->execute([
-                'user_id' => $userId,
-                'content' => $message,
-                'content_type' => $finalContentType,
-                'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
-                'poll_options' => $pollOptionsJson,
-                'story_title' => $storyTitle !== '' ? $storyTitle : null,
-                'story_caption' => $storyCaption !== '' ? $storyCaption : null,
-                'story_credit' => $storyCredit !== '' ? $storyCredit : null,
-                'status' => $status,
-                'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
-                'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
-            ]);
+            if ($extendedSchema) {
+                $insert = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, poll_question, poll_options, story_title, story_caption, story_credit, status, scheduled_for, published_at) VALUES (:user_id, :content, :content_type, :poll_question, :poll_options, :story_title, :story_caption, :story_credit, :status, :scheduled_for, :published_at)');
+                $insert->execute([
+                    'user_id' => $userId,
+                    'content' => $message,
+                    'content_type' => $finalContentType,
+                    'poll_question' => $pollQuestion !== '' ? $pollQuestion : null,
+                    'poll_options' => $pollOptionsJson,
+                    'story_title' => $storyTitle !== '' ? $storyTitle : null,
+                    'story_caption' => $storyCaption !== '' ? $storyCaption : null,
+                    'story_credit' => $storyCredit !== '' ? $storyCredit : null,
+                    'status' => $status,
+                    'scheduled_for' => $scheduledFor ? $scheduledFor->format('Y-m-d H:i:s') : null,
+                    'published_at' => $publishedAt ? $publishedAt->format('Y-m-d H:i:s') : null,
+                ]);
+            } else {
+                $insert = $pdo->prepare('INSERT INTO community_posts (user_id, content, content_type, media_url) VALUES (:user_id, :content, :content_type, NULL)');
+                $insert->execute([
+                    'user_id' => $userId,
+                    'content' => $message,
+                    'content_type' => $finalContentType,
+                ]);
+            }
 
             $postId = (int) $pdo->lastInsertId();
         }
@@ -4616,6 +5416,8 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
             'id' => $postId,
         ]);
 
+        replaceCommunityPostMentions($pdo, $postId, $userId, array_values($mentionedUserIds));
+
         $pdo->commit();
 
         if ($status === 'published') {
@@ -4623,6 +5425,12 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
                 notifyCommunityPostPublished($postId);
             } catch (\Throwable $exception) {
                 error_log('[BianconeriHub] Failed to dispatch push notifications for post ' . $postId . ': ' . $exception->getMessage());
+            }
+
+            try {
+                notifyCommunityPostMentions($postId);
+            } catch (\Throwable $exception) {
+                error_log('[BianconeriHub] Failed to dispatch mention notifications for post ' . $postId . ': ' . $exception->getMessage());
             }
         }
 
@@ -4640,7 +5448,13 @@ function addCommunityPost(int $userId, array $input, array $files = []): array
             deleteCommunityMediaFile($upload['relative_path']);
         }
 
+        $lastExceptionMessage = $exception->getMessage();
         error_log('[BianconeriHub] Failed to add community post: ' . $exception->getMessage());
+    }
+
+    if (!empty($appDebug)) {
+        $detail = $lastExceptionMessage ?: 'Errore sconosciuto.';
+        return ['success' => false, 'message' => 'Impossibile salvare il messaggio: ' . $detail];
     }
 
     return ['success' => false, 'message' => 'Impossibile salvare il messaggio al momento.'];

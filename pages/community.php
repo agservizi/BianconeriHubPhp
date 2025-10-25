@@ -6,6 +6,24 @@ $viewerId = ($isLoggedIn && $loggedUser) ? (int) ($loggedUser['id'] ?? 0) : 0;
 $feedPageSize = 8;
 $feedFetchSize = $feedPageSize + 1;
 
+$composerAvatarUrl = '';
+$composerCoverPath = '';
+$composerInitials = strtoupper(substr((string) ($loggedUser['username'] ?? 'BH'), 0, 2));
+$composerMetaClass = 'text-xs uppercase tracking-wide text-gray-500';
+
+if ($isLoggedIn && $loggedUser) {
+    $composerAvatarUrl = trim((string) ($loggedUser['avatar_url'] ?? ''));
+
+    if (!empty($loggedUser['username'])) {
+        $composerProfileView = getUserProfileView((string) $loggedUser['username'], $viewerId) ?: [];
+        $composerCoverPath = trim((string) ($composerProfileView['cover_path'] ?? ''));
+    }
+
+    if ($composerCoverPath !== '') {
+        $composerMetaClass = 'text-xs uppercase tracking-wide text-gray-200';
+    }
+}
+
 if (!function_exists('renderCommunityPostCard')) {
     function renderCommunityPostCard(array $post, bool $isLoggedIn, int $viewerId = 0, int $oldCommentPostId = 0, string $oldCommentBody = '', int $oldCommentParentId = 0): string
     {
@@ -163,15 +181,23 @@ $pushHasFollowing = $pushFollowingCount > 0;
         </aside>
 
         <div class="space-y-6">
-            <div class="fan-card px-5 py-6">
-                <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
-                    <div class="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-sm font-semibold text-white">
-                        <?php echo strtoupper(substr(($loggedUser['username'] ?? 'BH'), 0, 2)); ?>
+            <div class="fan-card relative overflow-hidden px-5 py-6">
+                <?php if ($composerCoverPath !== ''): ?>
+                    <img src="<?php echo htmlspecialchars($composerCoverPath, ENT_QUOTES, 'UTF-8'); ?>" alt="Cover profilo" class="absolute inset-0 h-full w-full object-cover opacity-40">
+                    <div class="absolute inset-0 bg-gradient-to-b from-black/40 via-black/70 to-black/90"></div>
+                <?php endif; ?>
+                <div class="relative flex flex-col gap-4 lg:flex-row lg:items-start">
+                    <div class="flex h-10 w-10 overflow-hidden rounded-full border border-white/20 bg-white/10 text-sm font-semibold text-white">
+                        <?php if ($composerAvatarUrl !== ''): ?>
+                            <img src="<?php echo htmlspecialchars($composerAvatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo htmlspecialchars($loggedUser['username'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8'); ?>" class="h-full w-full object-cover">
+                        <?php else: ?>
+                            <span class="flex h-full w-full items-center justify-center"><?php echo htmlspecialchars($composerInitials, ENT_QUOTES, 'UTF-8'); ?></span>
+                        <?php endif; ?>
                     </div>
                     <div class="flex-1">
                         <div class="flex items-center justify-between">
                             <p class="text-sm font-semibold text-white"><?php echo htmlspecialchars($loggedUser['username'] ?? 'BianconeriHub', ENT_QUOTES, 'UTF-8'); ?></p>
-                            <span class="text-xs uppercase tracking-wide text-gray-500"><?php echo htmlspecialchars($stats['posts'] > 0 ? 'Thread attivi ' . number_format($stats['posts'], 0, ',', '.') : 'Thread in partenza', ENT_QUOTES, 'UTF-8'); ?></span>
+                            <span class="<?php echo $composerMetaClass; ?>"><?php echo htmlspecialchars($stats['posts'] > 0 ? 'Thread attivi ' . number_format($stats['posts'], 0, ',', '.') : 'Thread in partenza', ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                         <?php if ($isLoggedIn && $loggedUser): ?>
                             <form action="" method="post" enctype="multipart/form-data" class="mt-3 space-y-4" data-community-composer data-composer-max-attachments="<?php echo (int) $maxComposerAttachments; ?>">

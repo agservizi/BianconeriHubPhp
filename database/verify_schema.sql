@@ -16,6 +16,7 @@ FROM (
     SELECT 'community_posts' UNION ALL
     SELECT 'community_post_media' UNION ALL
     SELECT 'community_post_reactions' UNION ALL
+    SELECT 'community_post_mentions' UNION ALL
     SELECT 'community_post_comments' UNION ALL
     SELECT 'community_comment_reactions' UNION ALL
     SELECT 'community_poll_votes' UNION ALL
@@ -92,6 +93,13 @@ FROM (
     SELECT 'community_post_reactions', 'reaction_type' UNION ALL
     SELECT 'community_post_reactions', 'created_at' UNION ALL
 
+    SELECT 'community_post_mentions', 'id' UNION ALL
+    SELECT 'community_post_mentions', 'post_id' UNION ALL
+    SELECT 'community_post_mentions', 'author_id' UNION ALL
+    SELECT 'community_post_mentions', 'mentioned_user_id' UNION ALL
+    SELECT 'community_post_mentions', 'notified_at' UNION ALL
+    SELECT 'community_post_mentions', 'created_at' UNION ALL
+
     SELECT 'community_post_comments', 'id' UNION ALL
     SELECT 'community_post_comments', 'post_id' UNION ALL
     SELECT 'community_post_comments', 'user_id' UNION ALL
@@ -156,6 +164,7 @@ FROM (
     SELECT 'community_posts' UNION ALL
     SELECT 'community_post_media' UNION ALL
     SELECT 'community_post_reactions' UNION ALL
+    SELECT 'community_post_mentions' UNION ALL
     SELECT 'community_post_comments' UNION ALL
     SELECT 'community_comment_reactions' UNION ALL
     SELECT 'community_poll_votes' UNION ALL

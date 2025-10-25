@@ -195,6 +195,32 @@ CREATE TABLE `community_post_reactions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- Table: community_post_mentions
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `community_post_mentions`;
+CREATE TABLE `community_post_mentions` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `post_id` INT UNSIGNED NOT NULL,
+    `author_id` INT UNSIGNED NOT NULL,
+    `mentioned_user_id` INT UNSIGNED NOT NULL,
+    `notified_at` DATETIME DEFAULT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `community_post_mentions_post_user_unique` (`post_id`, `mentioned_user_id`),
+    KEY `community_post_mentions_post_id_foreign` (`post_id`),
+    KEY `community_post_mentions_mentioned_user_id_foreign` (`mentioned_user_id`),
+    CONSTRAINT `community_post_mentions_post_id_foreign`
+        FOREIGN KEY (`post_id`) REFERENCES `community_posts` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `community_post_mentions_author_id_foreign`
+        FOREIGN KEY (`author_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `community_post_mentions_mentioned_user_id_foreign`
+        FOREIGN KEY (`mentioned_user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- Table: community_post_comments
 -- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS `community_post_comments`;

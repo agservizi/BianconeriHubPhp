@@ -37,45 +37,103 @@ $commentPrefill = ($oldCommentPostId === $postId && $parentPrefillId === 0) ? $o
 $replyPrefillId = ($oldCommentPostId === $postId && $parentPrefillId > 0) ? $parentPrefillId : 0;
 $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
 $communityEmojiOptions = getCommunityEmojiOptions();
+$authorAvatarUrl = trim((string) ($post['author_avatar_url'] ?? ''));
+$authorCoverPath = trim((string) ($post['author_cover_path'] ?? ''));
+$authorInitials = strtoupper(substr($post['author'] ?? 'BH', 0, 2));
+$headerTextClass = $authorCoverPath !== '' ? 'text-gray-200' : 'text-gray-500';
+$headerMetaClass = $authorCoverPath !== '' ? 'text-gray-200' : 'text-gray-500';
+$authorName = htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8');
 ?>
 <article id="post-<?php echo $postId; ?>" class="fan-card px-5 py-6 space-y-4" data-community-post>
-    <div class="flex flex-col gap-2 text-xs uppercase tracking-wide text-gray-500 sm:flex-row sm:items-center sm:justify-between">
-        <div class="flex items-center gap-2">
-            <div class="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xs font-semibold text-white">
-                <?php echo strtoupper(substr($post['author'] ?? 'BH', 0, 2)); ?>
-            </div>
-            <div>
-                <p class="text-sm font-semibold text-white"><?php echo htmlspecialchars($post['author'], ENT_QUOTES, 'UTF-8'); ?></p>
-                <?php if (!empty($post['badge'])): ?>
-                    <span class="text-xs text-gray-400"><?php echo htmlspecialchars($post['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
-                <?php endif; ?>
-                <?php if ($contentType === 'photo'): ?>
-                    <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Foto</span>
-                <?php elseif ($contentType === 'gallery'): ?>
-                    <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Gallery</span>
-                <?php elseif ($contentType === 'story'): ?>
-                    <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Storia</span>
-                <?php elseif ($contentType === 'poll'): ?>
-                    <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Sondaggio</span>
-                <?php endif; ?>
+    <?php if ($authorCoverPath !== ''): ?>
+        <div class="relative overflow-hidden rounded-2xl border border-white/10">
+            <img src="<?php echo htmlspecialchars($authorCoverPath, ENT_QUOTES, 'UTF-8'); ?>" alt="Cover di <?php echo $authorName; ?>" class="absolute inset-0 h-full w-full object-cover">
+            <div class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/60 to-black/80"></div>
+            <div class="relative flex flex-col gap-2 px-4 py-4 text-xs uppercase tracking-wide <?php echo $headerTextClass; ?> sm:flex-row sm:items-center sm:justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="flex h-9 w-9 overflow-hidden rounded-full border border-white/20 bg-white/10 text-xs font-semibold text-white">
+                        <?php if ($authorAvatarUrl !== ''): ?>
+                            <img src="<?php echo htmlspecialchars($authorAvatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo $authorName; ?>" class="h-full w-full object-cover">
+                        <?php else: ?>
+                            <span class="flex h-full w-full items-center justify-center"><?php echo htmlspecialchars($authorInitials, ENT_QUOTES, 'UTF-8'); ?></span>
+                        <?php endif; ?>
+                    </div>
+                    <div>
+                        <p class="text-sm font-semibold text-white"><?php echo $authorName; ?></p>
+                        <?php if (!empty($post['badge'])): ?>
+                            <span class="text-xs text-gray-200"><?php echo htmlspecialchars($post['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
+                        <?php endif; ?>
+                        <?php if ($contentType === 'photo'): ?>
+                            <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Foto</span>
+                        <?php elseif ($contentType === 'gallery'): ?>
+                            <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Gallery</span>
+                        <?php elseif ($contentType === 'story'): ?>
+                            <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Storia</span>
+                        <?php elseif ($contentType === 'poll'): ?>
+                            <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Sondaggio</span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <div class="flex items-center justify-end gap-3 sm:justify-end">
+                    <?php if ($viewerCanFollow): ?>
+                        <form method="post" class="inline">
+                            <input type="hidden" name="form_type" value="community_follow">
+                            <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
+                            <input type="hidden" name="user_id" value="<?php echo $authorId; ?>">
+                            <input type="hidden" name="follow_action" value="<?php echo htmlspecialchars($followAction, ENT_QUOTES, 'UTF-8'); ?>">
+                            <input type="hidden" name="redirect_to" value="<?php echo htmlspecialchars($followRedirect, ENT_QUOTES, 'UTF-8'); ?>">
+                            <button type="submit" class="<?php echo $followButtonClasses; ?>">
+                                <?php echo htmlspecialchars($followLabel, ENT_QUOTES, 'UTF-8'); ?>
+                            </button>
+                        </form>
+                    <?php endif; ?>
+                    <span class="<?php echo $headerMetaClass; ?> text-right"><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
+                </div>
             </div>
         </div>
-        <div class="flex items-center justify-end gap-3 sm:justify-end">
-            <?php if ($viewerCanFollow): ?>
-                <form method="post" class="inline">
-                    <input type="hidden" name="form_type" value="community_follow">
-                    <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
-                    <input type="hidden" name="user_id" value="<?php echo $authorId; ?>">
-                    <input type="hidden" name="follow_action" value="<?php echo htmlspecialchars($followAction, ENT_QUOTES, 'UTF-8'); ?>">
-                    <input type="hidden" name="redirect_to" value="<?php echo htmlspecialchars($followRedirect, ENT_QUOTES, 'UTF-8'); ?>">
-                    <button type="submit" class="<?php echo $followButtonClasses; ?>">
-                        <?php echo htmlspecialchars($followLabel, ENT_QUOTES, 'UTF-8'); ?>
-                    </button>
-                </form>
-            <?php endif; ?>
-            <span class="text-right"><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
+    <?php else: ?>
+        <div class="flex flex-col gap-2 text-xs uppercase tracking-wide <?php echo $headerTextClass; ?> sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex items-center gap-2">
+                <div class="flex h-9 w-9 overflow-hidden rounded-full border border-white/20 bg-white/10 text-xs font-semibold text-white">
+                    <?php if ($authorAvatarUrl !== ''): ?>
+                        <img src="<?php echo htmlspecialchars($authorAvatarUrl, ENT_QUOTES, 'UTF-8'); ?>" alt="Avatar di <?php echo $authorName; ?>" class="h-full w-full object-cover">
+                    <?php else: ?>
+                        <span class="flex h-full w-full items-center justify-center"><?php echo htmlspecialchars($authorInitials, ENT_QUOTES, 'UTF-8'); ?></span>
+                    <?php endif; ?>
+                </div>
+                <div>
+                    <p class="text-sm font-semibold text-white"><?php echo $authorName; ?></p>
+                    <?php if (!empty($post['badge'])): ?>
+                        <span class="text-xs text-gray-400"><?php echo htmlspecialchars($post['badge'], ENT_QUOTES, 'UTF-8'); ?></span>
+                    <?php endif; ?>
+                    <?php if ($contentType === 'photo'): ?>
+                        <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Foto</span>
+                    <?php elseif ($contentType === 'gallery'): ?>
+                        <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Gallery</span>
+                    <?php elseif ($contentType === 'story'): ?>
+                        <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Storia</span>
+                    <?php elseif ($contentType === 'poll'): ?>
+                        <span class="timeline-pill mt-2 inline-flex text-[0.6rem] font-semibold">Sondaggio</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div class="flex items-center justify-end gap-3 sm:justify-end">
+                <?php if ($viewerCanFollow): ?>
+                    <form method="post" class="inline">
+                        <input type="hidden" name="form_type" value="community_follow">
+                        <input type="hidden" name="_token" value="<?php echo htmlspecialchars(getCsrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="user_id" value="<?php echo $authorId; ?>">
+                        <input type="hidden" name="follow_action" value="<?php echo htmlspecialchars($followAction, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="redirect_to" value="<?php echo htmlspecialchars($followRedirect, ENT_QUOTES, 'UTF-8'); ?>">
+                        <button type="submit" class="<?php echo $followButtonClasses; ?>">
+                            <?php echo htmlspecialchars($followLabel, ENT_QUOTES, 'UTF-8'); ?>
+                        </button>
+                    </form>
+                <?php endif; ?>
+                <span class="text-right"><?php echo htmlspecialchars(getHumanTimeDiff($post['created_at']), ENT_QUOTES, 'UTF-8'); ?></span>
+            </div>
         </div>
-    </div>
+    <?php endif; ?>
     <?php if (!empty($mediaItems)): ?>
         <?php if (count($mediaItems) === 1):
             $singleMedia = $mediaItems[0];
