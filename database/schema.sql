@@ -237,6 +237,26 @@ CREATE TABLE `community_comment_reactions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- Table: community_poll_votes
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `community_poll_votes`;
+CREATE TABLE `community_poll_votes` (
+    `post_id` INT UNSIGNED NOT NULL,
+    `user_id` INT UNSIGNED NOT NULL,
+    `option_index` TINYINT UNSIGNED NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`post_id`, `user_id`),
+    KEY `community_poll_votes_user_id_foreign` (`user_id`),
+    CONSTRAINT `community_poll_votes_post_id_foreign`
+        FOREIGN KEY (`post_id`) REFERENCES `community_posts` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `community_poll_votes_user_id_foreign`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- Table: community_followers
 -- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS `community_followers`;

@@ -2660,15 +2660,15 @@ function notifyCommunityPostPublished(int $postId): void
     }
 }
 
-function publishDueCommunityPosts(): void
+function publishDueCommunityPosts(): int
 {
     $pdo = getDatabaseConnection();
     if (!$pdo) {
-        return;
+        return 0;
     }
 
     if (!communityPostsExtendedSchemaAvailable($pdo)) {
-        return;
+        return 0;
     }
 
     $postIds = [];
@@ -2688,7 +2688,7 @@ function publishDueCommunityPosts(): void
 
         if (empty($postIds)) {
             $pdo->commit();
-            return;
+            return 0;
         }
 
         $placeholders = implode(',', array_fill(0, count($postIds), '?'));
@@ -2703,12 +2703,14 @@ function publishDueCommunityPosts(): void
 
         error_log('[BianconeriHub] Failed to publish scheduled community posts: ' . $exception->getMessage());
 
-        return;
+        return 0;
     }
 
     foreach ($postIds as $postId) {
         notifyCommunityPostPublished($postId);
     }
+
+    return count($postIds);
 }
 
 function getCommunityPostMedia(array $postIds): array
@@ -3106,6 +3108,15 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
             return [];
         }
 
+        $pollPostIds = [];
+        foreach ($rawPosts as $rawPost) {
+            if (($rawPost['content_type'] ?? '') === 'poll') {
+                $pollPostIds[] = $rawPost['id'];
+            }
+        }
+
+        $pollSnapshot = !empty($pollPostIds) ? getCommunityPollVoteSnapshot($pollPostIds, $currentUserId) : [];
+
         $postIds = array_map(static function (array $post): int {
             return $post['id'];
         }, $rawPosts);
@@ -3132,6 +3143,45 @@ function getCommunityPosts(int $offset = 0, int $limit = 20): array
                     'mime' => '',
                     'position' => 0,
                 ];
+            }
+
+            if ($post['content_type'] === 'poll') {
+                $snapshot = $pollSnapshot[$post['id']] ?? [
+                    'options' => [],
+                    'total_votes' => 0,
+                    'viewer_choice' => null,
+                ];
+
+                $viewerChoice = array_key_exists('viewer_choice', $snapshot) ? $snapshot['viewer_choice'] : null;
+                $totalVotes = (int) ($snapshot['total_votes'] ?? 0);
+                $optionsWithStats = [];
+
+                foreach ($post['poll_options'] as $index => $optionLabel) {
+                    $votes = (int) ($snapshot['options'][$index] ?? 0);
+                    $percentage = $totalVotes > 0 ? (int) round(($votes / $totalVotes) * 100) : 0;
+                    if ($percentage < 0) {
+                        $percentage = 0;
+                    } elseif ($percentage > 100) {
+                        $percentage = 100;
+                    }
+
+                    $optionsWithStats[] = [
+                        'label' => $optionLabel,
+                        'votes' => $votes,
+                        'percentage' => $percentage,
+                        'index' => $index,
+                        'is_selected' => $viewerChoice === $index,
+                    ];
+                }
+
+                $post['poll_options'] = $optionsWithStats;
+                $post['poll_total_votes'] = $totalVotes;
+                $post['poll_viewer_choice'] = $viewerChoice;
+                $post['viewer_has_voted_poll'] = $viewerChoice !== null;
+            } else {
+                $post['poll_total_votes'] = 0;
+                $post['poll_viewer_choice'] = null;
+                $post['viewer_has_voted_poll'] = false;
             }
 
             $contentRender = renderCommunityContent($post['content'], $mentionMap);
@@ -3243,6 +3293,94 @@ function toggleCommunityReaction(int $postId, int $userId, string $reactionType)
     }
 
     return ['success' => false, 'message' => 'Impossibile aggiornare la reazione. Riprova.'];
+}
+
+function submitCommunityPollVote(int $postId, int $userId, int $optionIndex): array
+{
+    if ($postId <= 0 || $userId <= 0) {
+        return ['success' => false, 'message' => 'Richiesta di voto non valida.'];
+    }
+
+    $normalizedOption = $optionIndex >= 0 ? $optionIndex : -1;
+    if ($normalizedOption < 0) {
+        return ['success' => false, 'message' => 'Seleziona una delle opzioni disponibili.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio sondaggi non disponibile al momento.'];
+    }
+
+    if (!communityPostsExtendedSchemaAvailable($pdo)) {
+        return ['success' => false, 'message' => 'Questo sondaggio non è stato ancora aggiornato allo schema più recente.'];
+    }
+
+    if (!communityPollVotesTableAvailable($pdo)) {
+        return ['success' => false, 'message' => 'Completa la migrazione `community_poll_votes` prima di raccogliere voti.'];
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT content_type, poll_options, status FROM community_posts WHERE id = :id LIMIT 1');
+        $statement->execute(['id' => $postId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row) {
+            return ['success' => false, 'message' => 'Post non trovato o rimosso.'];
+        }
+
+        if (($row['content_type'] ?? '') !== 'poll') {
+            return ['success' => false, 'message' => 'Questo post non prevede votazioni.'];
+        }
+
+        if (($row['status'] ?? 'published') !== 'published') {
+            return ['success' => false, 'message' => 'Il sondaggio non è ancora pubblico.'];
+        }
+
+        $rawOptions = $row['poll_options'] ?? null;
+        $pollOptions = [];
+
+        if ($rawOptions !== null && $rawOptions !== '') {
+            try {
+                $decoded = json_decode((string) $rawOptions, true, 512, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $option) {
+                        $label = trim((string) $option);
+                        if ($label !== '') {
+                            $pollOptions[] = mb_substr($label, 0, 120);
+                        }
+                    }
+                }
+            } catch (\JsonException $exception) {
+                error_log('[BianconeriHub] Invalid poll options JSON for post ' . $postId . ': ' . $exception->getMessage());
+            }
+        }
+
+        if (!isset($pollOptions[$normalizedOption])) {
+            return ['success' => false, 'message' => 'Opzione del sondaggio non valida.'];
+        }
+
+        $insert = $pdo->prepare(
+            'INSERT INTO community_poll_votes (post_id, user_id, option_index)
+             VALUES (:post_id, :user_id, :option_index)
+             ON DUPLICATE KEY UPDATE option_index = VALUES(option_index), updated_at = CURRENT_TIMESTAMP'
+        );
+
+        $insert->execute([
+            'post_id' => $postId,
+            'user_id' => $userId,
+            'option_index' => $normalizedOption,
+        ]);
+
+        return [
+            'success' => true,
+            'option_index' => $normalizedOption,
+            'label' => $pollOptions[$normalizedOption],
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to store poll vote: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'message' => 'Impossibile registrare il voto. Riprova più tardi.'];
 }
 
 function findCommunityCommentById(int $commentId): ?array
@@ -3774,6 +3912,127 @@ function communityPostsExtendedSchemaAvailable(?PDO $connection = null): bool
     }
 
     return $cache;
+}
+
+function communityPollVotesTableAvailable(?PDO $connection = null): bool
+{
+    static $cache;
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        $cache = false;
+        return $cache;
+    }
+
+    try {
+        $pdo->query('SELECT 1 FROM community_poll_votes LIMIT 1');
+        $cache = true;
+    } catch (PDOException $exception) {
+        $sqlState = $exception->getCode();
+        if ($sqlState === '42S02' || stripos($exception->getMessage(), 'community_poll_votes') !== false) {
+            $cache = false;
+        } else {
+            error_log('[BianconeriHub] Failed checking community_poll_votes availability: ' . $exception->getMessage());
+            $cache = false;
+        }
+    }
+
+    return $cache;
+}
+
+function getCommunityPollVoteSnapshot(array $postIds, int $viewerId = 0): array
+{
+    $uniqueIds = [];
+    foreach ($postIds as $postId) {
+        $intId = (int) $postId;
+        if ($intId > 0) {
+            $uniqueIds[$intId] = $intId;
+        }
+    }
+
+    if (empty($uniqueIds)) {
+        return [];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo || !communityPollVotesTableAvailable($pdo)) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($uniqueIds), '?'));
+
+    $snapshot = [];
+
+    try {
+        $statement = $pdo->prepare(
+            'SELECT post_id, option_index, COUNT(*) AS votes
+             FROM community_poll_votes
+             WHERE post_id IN (' . $placeholders . ')
+             GROUP BY post_id, option_index'
+        );
+        $statement->execute(array_values($uniqueIds));
+
+        foreach ($statement as $row) {
+            $postId = (int) ($row['post_id'] ?? 0);
+            $optionIndex = (int) ($row['option_index'] ?? 0);
+            $votes = (int) ($row['votes'] ?? 0);
+
+            if ($postId <= 0 || $optionIndex < 0) {
+                continue;
+            }
+
+            if (!isset($snapshot[$postId])) {
+                $snapshot[$postId] = [
+                    'options' => [],
+                    'total_votes' => 0,
+                    'viewer_choice' => null,
+                ];
+            }
+
+            $snapshot[$postId]['options'][$optionIndex] = $votes;
+            $snapshot[$postId]['total_votes'] += $votes;
+        }
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to aggregate poll votes: ' . $exception->getMessage());
+        return [];
+    }
+
+    if ($viewerId > 0) {
+        try {
+            $viewerStatement = $pdo->prepare(
+                'SELECT post_id, option_index
+                 FROM community_poll_votes
+                 WHERE user_id = ? AND post_id IN (' . $placeholders . ')'
+            );
+            $viewerStatement->execute(array_merge([$viewerId], array_values($uniqueIds)));
+
+            foreach ($viewerStatement as $row) {
+                $postId = (int) ($row['post_id'] ?? 0);
+                $optionIndex = (int) ($row['option_index'] ?? 0);
+                if ($postId <= 0 || $optionIndex < 0) {
+                    continue;
+                }
+
+                if (!isset($snapshot[$postId])) {
+                    $snapshot[$postId] = [
+                        'options' => [],
+                        'total_votes' => 0,
+                        'viewer_choice' => $optionIndex,
+                    ];
+                } else {
+                    $snapshot[$postId]['viewer_choice'] = $optionIndex;
+                }
+            }
+        } catch (PDOException $exception) {
+            error_log('[BianconeriHub] Failed to load viewer poll votes: ' . $exception->getMessage());
+        }
+    }
+
+    return $snapshot;
 }
 
 function addCommunityPost(int $userId, array $input, array $files = []): array

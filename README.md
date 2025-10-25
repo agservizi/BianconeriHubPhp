@@ -89,8 +89,22 @@ Portale community dedicato ai tifosi juventini con news reali, calendario partit
    >   CONSTRAINT community_comment_reactions_user_id_foreign FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
    > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
    > 
-   > -- In alternativa puoi lanciare lo script idempotente:
+   > -- Community sondaggi: votazioni (ottobre 2025)
+   > CREATE TABLE IF NOT EXISTS community_poll_votes (
+   >   post_id INT UNSIGNED NOT NULL,
+   >   user_id INT UNSIGNED NOT NULL,
+   >   option_index TINYINT UNSIGNED NOT NULL,
+   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   >   updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+   >   PRIMARY KEY (post_id, user_id),
+   >   KEY community_poll_votes_user_id_foreign (user_id),
+   >   CONSTRAINT community_poll_votes_post_id_foreign FOREIGN KEY (post_id) REFERENCES community_posts(id) ON DELETE CASCADE ON UPDATE CASCADE,
+   >   CONSTRAINT community_poll_votes_user_id_foreign FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
+   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+   > 
+   > -- In alternativa puoi lanciare gli script idempotenti:
    > php scripts/migrate_comment_features.php
+   > php scripts/migrate_poll_votes.php
    >
    > CREATE TABLE user_push_subscriptions (
    >   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -126,6 +140,20 @@ Portale community dedicato ai tifosi juventini con news reali, calendario partit
   ```cron
   */15 * * * * /usr/bin/php /path/to/BianconeriHubPhp/scripts/sync_news.php >> /var/log/bianconerihub_sync.log 2>&1
   ```
+
+## Automazioni community
+
+- Pianifica la pubblicazione dei post programmati lanciando periodicamente `php scripts/publish_scheduled_posts.php`. Esempio cron ogni 5 minuti:
+   ```cron
+   */5 * * * * /usr/bin/php /path/to/BianconeriHubPhp/scripts/publish_scheduled_posts.php >> /var/log/bianconerihub_scheduler.log 2>&1
+   ```
+- Accertati che la cartella `uploads/community` sia scrivibile dall’utente del web server prima di abilitare gli upload fotografici.
+
+## Utility CLI
+
+- `php scripts/check_db_status.php` stampa un riepilogo delle tabelle attese e segnala eventuali colonne mancanti.
+- `php scripts/migrate_comment_features.php` e `php scripts/migrate_poll_votes.php` applicano in modo idempotente le migrazioni community più recenti.
+- `php scripts/remote_debug.php` utilizza le credenziali facoltative configurate nello `.env` (`REMOTE_DEBUG_*`) per verificare rapidamente la connettività ad un database remoto.
 
 ## Funzionalità principali
 

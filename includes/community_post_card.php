@@ -26,6 +26,9 @@ $mediaItems = is_array($post['media'] ?? null) ? $post['media'] : [];
 $mediaUrl = trim((string) ($post['media_url'] ?? ''));
 $pollQuestion = trim((string) ($post['poll_question'] ?? ''));
 $pollOptions = is_array($post['poll_options'] ?? null) ? $post['poll_options'] : [];
+$pollTotalVotes = (int) ($post['poll_total_votes'] ?? 0);
+$viewerPollChoice = $post['poll_viewer_choice'] ?? null;
+$viewerHasVotedPoll = !empty($post['viewer_has_voted_poll']);
 $parentPrefillId = isset($oldCommentParentId) ? (int) $oldCommentParentId : 0;
 $commentPrefill = ($oldCommentPostId === $postId && $parentPrefillId === 0) ? $oldCommentBody : '';
 $replyPrefillId = ($oldCommentPostId === $postId && $parentPrefillId > 0) ? $parentPrefillId : 0;
@@ -101,13 +104,42 @@ $replyPrefillBody = $replyPrefillId > 0 ? $oldCommentBody : '';
             <p class="text-sm font-semibold text-white"><?php echo htmlspecialchars($pollQuestion, ENT_QUOTES, 'UTF-8'); ?></p>
             <?php if (!empty($pollOptions)): ?>
                 <ul class="space-y-2 text-sm text-gray-300">
-                    <?php foreach ($pollOptions as $option): ?>
-                        <li class="flex items-center justify-between rounded-2xl border border-white/10 bg-black/40 px-4 py-2">
-                            <span><?php echo htmlspecialchars($option, ENT_QUOTES, 'UTF-8'); ?></span>
-                            <span class="text-xs uppercase tracking-wide text-gray-500">0 voti</span>
+                    <?php foreach ($pollOptions as $option) {
+                        $optionLabel = is_array($option) ? (string) ($option['label'] ?? '') : (string) $option;
+                        $optionVotes = is_array($option) ? (int) ($option['votes'] ?? 0) : 0;
+                        $optionPercentage = is_array($option) ? (int) ($option['percentage'] ?? 0) : 0;
+                        $optionIndex = is_array($option) ? (int) ($option['index'] ?? -1) : -1;
+                        $isSelected = is_array($option) ? !empty($option['is_selected']) : false;
+                        if ($optionLabel === '') {
+                            $optionLabel = $optionIndex >= 0 ? 'Opzione ' . ($optionIndex + 1) : 'Opzione';
+                        }
+                        if ($optionPercentage < 0) {
+                            $optionPercentage = 0;
+                        } elseif ($optionPercentage > 100) {
+                            $optionPercentage = 100;
+                        }
+                        $optionClasses = 'rounded-2xl border border-white/10 bg-black/40 px-4 py-3';
+                        if ($isSelected) {
+                            $optionClasses .= ' border-white/60 bg-white/10 text-white';
+                        }
+                    ?>
+                        <li class="<?php echo $optionClasses; ?>">
+                            <div class="flex items-center justify-between gap-2">
+                                <span><?php echo htmlspecialchars($optionLabel, ENT_QUOTES, 'UTF-8'); ?></span>
+                                <span class="text-xs uppercase tracking-wide text-gray-500">
+                                    <?php echo number_format($optionVotes, 0, ',', '.'); ?> · <?php echo $optionPercentage; ?>%
+                                </span>
+                            </div>
+                            <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                                <div class="h-full rounded-full bg-white/60" style="width: <?php echo $optionPercentage; ?>%;"></div>
+                            </div>
+                            <?php if ($viewerHasVotedPoll && $viewerPollChoice === $optionIndex): ?>
+                                <p class="mt-2 text-[0.65rem] font-semibold uppercase tracking-wide text-white/80">Il tuo voto</p>
+                            <?php endif; ?>
                         </li>
-                    <?php endforeach; ?>
+                    <?php } ?>
                 </ul>
+                <p class="text-xs uppercase tracking-wide text-gray-500"><?php echo number_format($pollTotalVotes, 0, ',', '.'); ?> voti totali</p>
             <?php endif; ?>
         </div>
     <?php endif; ?>
