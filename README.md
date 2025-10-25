@@ -73,6 +73,24 @@ Portale community dedicato ai tifosi juventini con news reali, calendario partit
    >   CONSTRAINT community_followers_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE,
    >   CONSTRAINT community_followers_follower_id_foreign FOREIGN KEY (follower_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
    > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+   > -- Community commenti: risposte e like (ottobre 2025)
+   > ALTER TABLE community_post_comments ADD COLUMN IF NOT EXISTS parent_comment_id INT UNSIGNED NULL AFTER user_id;
+   > -- Se il vincolo esiste già, salta la riga seguente
+   > ALTER TABLE community_post_comments ADD CONSTRAINT community_post_comments_parent_comment_id_foreign FOREIGN KEY (parent_comment_id) REFERENCES community_post_comments(id) ON DELETE CASCADE ON UPDATE CASCADE;
+   > 
+   > CREATE TABLE IF NOT EXISTS community_comment_reactions (
+   >   comment_id INT UNSIGNED NOT NULL,
+   >   user_id INT UNSIGNED NOT NULL,
+   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   >   PRIMARY KEY (comment_id, user_id),
+   >   KEY community_comment_reactions_user_id_index (user_id),
+   >   CONSTRAINT community_comment_reactions_comment_id_foreign FOREIGN KEY (comment_id) REFERENCES community_post_comments(id) ON DELETE CASCADE ON UPDATE CASCADE,
+   >   CONSTRAINT community_comment_reactions_user_id_foreign FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
+   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+   > 
+   > -- In alternativa puoi lanciare lo script idempotente:
+   > php scripts/migrate_comment_features.php
    >
    > CREATE TABLE user_push_subscriptions (
    >   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

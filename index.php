@@ -356,6 +356,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($formType === 'community_comment') {
         $postId = isset($_POST['post_id']) ? (int) $_POST['post_id'] : 0;
+        $parentCommentId = isset($_POST['parent_comment_id']) ? (int) $_POST['parent_comment_id'] : 0;
         $redirectUrl = '?page=community';
         if (isset($_POST['redirect_to'])) {
             $candidate = trim((string) $_POST['redirect_to']);
@@ -374,6 +375,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             storeOldInput([
                 'community_comment' => $commentBody,
                 'community_comment_post_id' => $postId,
+                'community_comment_parent_id' => $parentCommentId,
             ]);
             setFlash('community', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
             header('Location: ' . $redirectUrl);
@@ -390,6 +392,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             storeOldInput([
                 'community_comment' => $commentBody,
                 'community_comment_post_id' => $postId,
+                'community_comment_parent_id' => $parentCommentId,
             ]);
             setFlash('community', 'Effettua il login per commentare.', 'error');
             header('Location: ?page=login');
@@ -397,17 +400,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $user = getLoggedInUser();
-        $result = addCommunityComment($postId, (int) $user['id'], $commentBody);
+        $result = addCommunityComment($postId, (int) $user['id'], $commentBody, $parentCommentId);
 
         if ($result['success']) {
-            forgetOldInput(['community_comment', 'community_comment_post_id']);
-            setFlash('community', 'Commento pubblicato con successo!', 'success');
+            forgetOldInput(['community_comment', 'community_comment_post_id', 'community_comment_parent_id']);
+            $flashMessage = $parentCommentId > 0
+                ? 'Risposta pubblicata con successo!'
+                : 'Commento pubblicato con successo!';
+            setFlash('community', $flashMessage, 'success');
         } else {
             storeOldInput([
                 'community_comment' => $commentBody,
                 'community_comment_post_id' => $postId,
+                'community_comment_parent_id' => $parentCommentId,
             ]);
             $error = $result['message'] ?? 'Impossibile pubblicare il commento.';
+            setFlash('community', $error, 'error');
+        }
+
+        header('Location: ' . $redirectUrl);
+        exit;
+    }
+
+    if ($formType === 'community_comment_reaction') {
+        $commentId = isset($_POST['comment_id']) ? (int) $_POST['comment_id'] : 0;
+        $redirectUrl = '?page=community';
+        if (isset($_POST['redirect_to'])) {
+            $candidate = trim((string) $_POST['redirect_to']);
+            if ($candidate !== '' && !preg_match('/^https?:/i', $candidate)) {
+                if ($candidate[0] === '?') {
+                    $redirectUrl = $candidate;
+                } elseif ($candidate[0] === '#') {
+                    $redirectUrl .= $candidate;
+                }
+            }
+        }
+
+        if (!validateCsrfToken($_POST['_token'] ?? '')) {
+            setFlash('community', 'Sessione scaduta. Aggiorna la pagina e riprova.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if ($commentId <= 0) {
+            setFlash('community', 'Commento non valido.', 'error');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        if (!isUserLoggedIn()) {
+            setFlash('community', 'Effettua il login per mettere Mi piace ai commenti.', 'error');
+            header('Location: ?page=login');
+            exit;
+        }
+
+        $user = getLoggedInUser();
+        $result = toggleCommunityCommentReaction($commentId, (int) $user['id']);
+
+        if ($result['success']) {
+            $state = $result['state'] ?? 'added';
+            $message = $state === 'removed'
+                ? 'Hai rimosso il tuo Mi piace dal commento.'
+                : 'Hai messo Mi piace al commento.';
+            setFlash('community', $message, 'success');
+        } else {
+            $error = $result['message'] ?? 'Impossibile aggiornare il Mi piace.';
             setFlash('community', $error, 'error');
         }
 

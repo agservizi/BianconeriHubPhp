@@ -1,12 +1,13 @@
 <?php
 $isLoggedIn = isUserLoggedIn();
 $loggedUser = getLoggedInUser();
+$viewerId = ($isLoggedIn && $loggedUser) ? (int) ($loggedUser['id'] ?? 0) : 0;
 
 $feedPageSize = 8;
 $feedFetchSize = $feedPageSize + 1;
 
 if (!function_exists('renderCommunityPostCard')) {
-    function renderCommunityPostCard(array $post, bool $isLoggedIn, int $oldCommentPostId = 0, string $oldCommentBody = ''): string
+    function renderCommunityPostCard(array $post, bool $isLoggedIn, int $viewerId = 0, int $oldCommentPostId = 0, string $oldCommentBody = '', int $oldCommentParentId = 0): string
     {
         $template = __DIR__ . '/../includes/community_post_card.php';
         if (!is_file($template)) {
@@ -36,7 +37,7 @@ if (isset($_GET['community_feed'])) {
 
     $html = '';
     foreach ($posts as $post) {
-        $html .= renderCommunityPostCard($post, $isLoggedIn, 0, '');
+        $html .= renderCommunityPostCard($post, $isLoggedIn, $viewerId, 0, '', 0);
     }
 
     header('Content-Type: application/json');
@@ -66,6 +67,7 @@ $trendingTags = array_slice($trendingTags, 0, 6);
 $recentMembers = array_slice($registeredUsers, 0, 8);
 $oldCommentBody = (string) getOldInput('community_comment', '');
 $oldCommentPostId = (int) getOldInput('community_comment_post_id', 0);
+$oldCommentParentId = (int) getOldInput('community_comment_parent_id', 0);
 $oldMessage = getOldInput('message');
 $oldComposerMode = strtolower((string) getOldInput('composer_mode', 'text'));
 if (!in_array($oldComposerMode, ['text', 'photo', 'poll'], true)) {
@@ -337,7 +339,7 @@ $pushHasFollowing = $pushFollowingCount > 0;
                 <div class="space-y-6" data-community-feed-list>
                     <?php if (!empty($posts)): ?>
                         <?php foreach ($posts as $post): ?>
-                            <?php echo renderCommunityPostCard($post, $isLoggedIn, $oldCommentPostId, $oldCommentBody); ?>
+                            <?php echo renderCommunityPostCard($post, $isLoggedIn, $viewerId, $oldCommentPostId, $oldCommentBody, $oldCommentParentId); ?>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <div class="fan-card px-5 py-6">

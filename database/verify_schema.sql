@@ -17,6 +17,7 @@ FROM (
     SELECT 'community_post_media' UNION ALL
     SELECT 'community_post_reactions' UNION ALL
     SELECT 'community_post_comments' UNION ALL
+    SELECT 'community_comment_reactions' UNION ALL
     SELECT 'community_followers' UNION ALL
     SELECT 'news_likes' UNION ALL
     SELECT 'news_comments' UNION ALL
@@ -93,9 +94,14 @@ FROM (
     SELECT 'community_post_comments', 'id' UNION ALL
     SELECT 'community_post_comments', 'post_id' UNION ALL
     SELECT 'community_post_comments', 'user_id' UNION ALL
+    SELECT 'community_post_comments', 'parent_comment_id' UNION ALL
     SELECT 'community_post_comments', 'content' UNION ALL
     SELECT 'community_post_comments', 'created_at' UNION ALL
     SELECT 'community_post_comments', 'updated_at' UNION ALL
+
+    SELECT 'community_comment_reactions', 'comment_id' UNION ALL
+    SELECT 'community_comment_reactions', 'user_id' UNION ALL
+    SELECT 'community_comment_reactions', 'created_at' UNION ALL
 
     SELECT 'community_followers', 'id' UNION ALL
     SELECT 'community_followers', 'user_id' UNION ALL
@@ -144,6 +150,7 @@ FROM (
     SELECT 'community_post_media' UNION ALL
     SELECT 'community_post_reactions' UNION ALL
     SELECT 'community_post_comments' UNION ALL
+    SELECT 'community_comment_reactions' UNION ALL
     SELECT 'community_followers' UNION ALL
     SELECT 'news_likes' UNION ALL
     SELECT 'news_comments' UNION ALL

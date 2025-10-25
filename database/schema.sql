@@ -18,6 +18,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 DROP TABLE IF EXISTS `news_comments`;
 DROP TABLE IF EXISTS `news_likes`;
+DROP TABLE IF EXISTS `community_comment_reactions`;
 DROP TABLE IF EXISTS `community_post_comments`;
 DROP TABLE IF EXISTS `community_post_reactions`;
 DROP TABLE IF EXISTS `community_posts`;
@@ -198,16 +199,39 @@ CREATE TABLE `community_post_comments` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `post_id` INT UNSIGNED NOT NULL,
     `user_id` INT UNSIGNED NOT NULL,
+    `parent_comment_id` INT UNSIGNED DEFAULT NULL,
     `content` TEXT NOT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     KEY `community_post_comments_post_id_foreign` (`post_id`),
     KEY `community_post_comments_user_id_foreign` (`user_id`),
+    KEY `community_post_comments_parent_comment_id_foreign` (`parent_comment_id`),
     CONSTRAINT `community_post_comments_post_id_foreign`
         FOREIGN KEY (`post_id`) REFERENCES `community_posts` (`id`)
         ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT `community_post_comments_user_id_foreign`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `community_post_comments_parent_comment_id_foreign`
+        FOREIGN KEY (`parent_comment_id`) REFERENCES `community_post_comments` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Table: community_comment_reactions
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `community_comment_reactions`;
+CREATE TABLE `community_comment_reactions` (
+    `comment_id` INT UNSIGNED NOT NULL,
+    `user_id` INT UNSIGNED NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`comment_id`, `user_id`),
+    KEY `community_comment_reactions_user_id_index` (`user_id`),
+    CONSTRAINT `community_comment_reactions_comment_id_foreign`
+        FOREIGN KEY (`comment_id`) REFERENCES `community_post_comments` (`id`)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `community_comment_reactions_user_id_foreign`
         FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
         ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -3245,7 +3245,40 @@ function toggleCommunityReaction(int $postId, int $userId, string $reactionType)
     return ['success' => false, 'message' => 'Impossibile aggiornare la reazione. Riprova.'];
 }
 
-function addCommunityComment(int $postId, int $userId, string $content): array
+function findCommunityCommentById(int $commentId): ?array
+{
+    if ($commentId <= 0) {
+        return null;
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return null;
+    }
+
+    try {
+        $statement = $pdo->prepare('SELECT id, post_id, user_id, parent_comment_id FROM community_post_comments WHERE id = :id LIMIT 1');
+        $statement->execute(['id' => $commentId]);
+
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'post_id' => (int) ($row['post_id'] ?? 0),
+            'user_id' => (int) ($row['user_id'] ?? 0),
+            'parent_comment_id' => isset($row['parent_comment_id']) ? (int) $row['parent_comment_id'] : null,
+        ];
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Failed to load community comment #' . $commentId . ': ' . $exception->getMessage());
+    }
+
+    return null;
+}
+
+function addCommunityComment(int $postId, int $userId, string $content, int $parentCommentId = 0): array
 {
     $trimmed = trim($content);
 
@@ -3262,20 +3295,43 @@ function addCommunityComment(int $postId, int $userId, string $content): array
         return ['success' => false, 'message' => 'Post non trovato.'];
     }
 
+    $parentId = $parentCommentId > 0 ? $parentCommentId : 0;
+    $parentComment = null;
+
+    if ($parentId > 0) {
+        $parentComment = findCommunityCommentById($parentId);
+        if (!$parentComment || (int) $parentComment['post_id'] !== $postId) {
+            return ['success' => false, 'message' => 'Il commento a cui vuoi rispondere non esiste più.'];
+        }
+
+        // Evita catene troppo lunghe obbligando le risposte ad agganciarsi al commento principale
+        if (!empty($parentComment['parent_comment_id'])) {
+            $rootParentId = (int) $parentComment['parent_comment_id'];
+            if ($rootParentId > 0) {
+                $parentId = $rootParentId;
+            }
+        }
+    }
+
     $pdo = getDatabaseConnection();
     if (!$pdo) {
         return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
     }
 
     try {
-        $statement = $pdo->prepare('INSERT INTO community_post_comments (post_id, user_id, content) VALUES (:post_id, :user_id, :content)');
+        $statement = $pdo->prepare('INSERT INTO community_post_comments (post_id, user_id, content, parent_comment_id) VALUES (:post_id, :user_id, :content, :parent_id)');
         $statement->execute([
             'post_id' => $postId,
             'user_id' => $userId,
             'content' => $trimmed,
+            'parent_id' => $parentId > 0 ? $parentId : null,
         ]);
 
-        return ['success' => true];
+        return [
+            'success' => true,
+            'comment_id' => (int) $pdo->lastInsertId(),
+            'reply_to' => $parentId,
+        ];
     } catch (PDOException $exception) {
         error_log('[BianconeriHub] Failed to add community comment: ' . $exception->getMessage());
     }
@@ -3283,44 +3339,166 @@ function addCommunityComment(int $postId, int $userId, string $content): array
     return ['success' => false, 'message' => 'Impossibile pubblicare il commento al momento.'];
 }
 
-function getCommunityComments(int $postId, int $limit = 20): array
+function getCommunityComments(int $postId, int $limit = 20, int $viewerId = 0): array
 {
     $pdo = getDatabaseConnection();
     if (!$pdo) {
         return [];
     }
 
-    $limit = max(1, min($limit, 50));
+    $limit = max(1, min($limit, 100));
+    $totalLimit = min($limit * 5, 200);
 
     try {
-        $sql = 'SELECT c.id, c.content, c.created_at, u.username, u.badge
+        $selectFields = 'c.id, c.parent_comment_id, c.content, c.created_at, c.updated_at, c.post_id, c.user_id, u.username, u.badge, COALESCE(l.likes_count, 0) AS likes_count';
+        if ($viewerId > 0) {
+            $selectFields .= ', CASE WHEN ul.user_id IS NULL THEN 0 ELSE 1 END AS has_liked';
+        } else {
+            $selectFields .= ', 0 AS has_liked';
+        }
+
+        $sql = 'SELECT ' . $selectFields . '
                 FROM community_post_comments c
                 INNER JOIN users u ON u.id = c.user_id
-                WHERE c.post_id = :post_id
-                ORDER BY c.created_at ASC
-                LIMIT ' . $limit;
+                LEFT JOIN (
+                    SELECT comment_id, COUNT(*) AS likes_count
+                    FROM community_comment_reactions
+                    GROUP BY comment_id
+                ) l ON l.comment_id = c.id';
+
+        if ($viewerId > 0) {
+            $sql .= '\n                LEFT JOIN community_comment_reactions ul ON ul.comment_id = c.id AND ul.user_id = :viewer_id';
+        }
+
+        $sql .= '\n                WHERE c.post_id = :post_id
+                ORDER BY c.created_at ASC, c.id ASC
+                LIMIT :limit';
+
         $statement = $pdo->prepare($sql);
         $statement->bindValue(':post_id', $postId, PDO::PARAM_INT);
+        if ($viewerId > 0) {
+            $statement->bindValue(':viewer_id', $viewerId, PDO::PARAM_INT);
+        }
+        $statement->bindValue(':limit', $totalLimit, PDO::PARAM_INT);
         $statement->execute();
 
-        $comments = [];
-
+        $byId = [];
         foreach ($statement as $row) {
-            $comments[] = [
-                'id' => (int) ($row['id'] ?? 0),
+            $commentId = (int) ($row['id'] ?? 0);
+            if ($commentId <= 0) {
+                continue;
+            }
+
+            $parentId = isset($row['parent_comment_id']) ? (int) $row['parent_comment_id'] : 0;
+
+            $byId[$commentId] = [
+                'id' => $commentId,
+                'post_id' => (int) ($row['post_id'] ?? $postId),
+                'parent_id' => $parentId > 0 ? $parentId : null,
                 'author' => $row['username'] ?? 'Tifoso',
                 'badge' => $row['badge'] ?? 'Tifoso',
                 'content' => $row['content'] ?? '',
                 'created_at' => normalizeToTimestamp($row['created_at'] ?? time()),
+                'updated_at' => isset($row['updated_at']) ? normalizeToTimestamp($row['updated_at']) : null,
+                'likes' => (int) ($row['likes_count'] ?? 0),
+                'has_liked' => ((int) ($row['has_liked'] ?? 0)) === 1,
+                'replies' => [],
             ];
         }
 
-        return $comments;
+        if (empty($byId)) {
+            return [];
+        }
+
+        foreach ($byId as $commentId => &$comment) {
+            $parentId = $comment['parent_id'];
+            if ($parentId !== null && isset($byId[$parentId])) {
+                $byId[$parentId]['replies'][] = &$comment;
+            }
+        }
+        unset($comment);
+
+        $topLevel = [];
+        foreach ($byId as $comment) {
+            if ($comment['parent_id'] !== null && isset($byId[$comment['parent_id']])) {
+                continue;
+            }
+            $topLevel[] = $comment;
+        }
+        if (count($topLevel) > $limit) {
+            $topLevel = array_slice($topLevel, 0, $limit);
+        }
+
+        return $topLevel;
     } catch (PDOException $exception) {
         error_log('[BianconeriHub] Failed to load community comments: ' . $exception->getMessage());
     }
 
     return [];
+}
+
+function toggleCommunityCommentReaction(int $commentId, int $userId): array
+{
+    if ($commentId <= 0 || $userId <= 0) {
+        return ['success' => false, 'message' => 'Reazione non valida.'];
+    }
+
+    $pdo = getDatabaseConnection();
+    if (!$pdo) {
+        return ['success' => false, 'message' => 'Servizio momentaneamente non disponibile.'];
+    }
+
+    $comment = findCommunityCommentById($commentId);
+    if (!$comment) {
+        return ['success' => false, 'message' => 'Il commento non esiste più.'];
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        $check = $pdo->prepare('SELECT 1 FROM community_comment_reactions WHERE comment_id = :comment_id AND user_id = :user_id LIMIT 1');
+        $check->execute([
+            'comment_id' => $commentId,
+            'user_id' => $userId,
+        ]);
+
+        if ($check->fetchColumn()) {
+            $delete = $pdo->prepare('DELETE FROM community_comment_reactions WHERE comment_id = :comment_id AND user_id = :user_id');
+            $delete->execute([
+                'comment_id' => $commentId,
+                'user_id' => $userId,
+            ]);
+
+            $pdo->commit();
+
+            return [
+                'success' => true,
+                'state' => 'removed',
+                'post_id' => (int) ($comment['post_id'] ?? 0),
+            ];
+        }
+
+        $insert = $pdo->prepare('INSERT INTO community_comment_reactions (comment_id, user_id) VALUES (:comment_id, :user_id)');
+        $insert->execute([
+            'comment_id' => $commentId,
+            'user_id' => $userId,
+        ]);
+
+        $pdo->commit();
+
+        return [
+            'success' => true,
+            'state' => 'added',
+            'post_id' => (int) ($comment['post_id'] ?? 0),
+        ];
+    } catch (PDOException $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[BianconeriHub] Failed to toggle comment reaction: ' . $exception->getMessage());
+    }
+
+    return ['success' => false, 'message' => 'Impossibile aggiornare la reazione in questo momento.'];
 }
 
 function resolveCommunityUploadDirectory(): string
