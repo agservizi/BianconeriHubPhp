@@ -1,0 +1,39 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Dependency directories
+/vendor/
+/node_modules/
+
+# Build artifacts
+/public/build/
+/public/dist/
+/public/hot
+/bootstrap/cache/
+/storage/framework/cache/
+/storage/framework/sessions/
+/storage/framework/views/
+/storage/logs/
+
+# Application uploads and caches
+/uploads/
+/storage/cache/
+/storage/app/public/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Composer lock on shared hosting backups
+composer.lock
+
+# PHPUnit
+.phpunit.result.cache

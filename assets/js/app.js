@@ -2030,6 +2030,202 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initCommentLikeEnhancements();
 
+    const initPwaInstallPrompt = () => {
+        if (!('serviceWorker' in navigator)) {
+            return;
+        }
+
+        const banner = document.querySelector('[data-pwa-install-banner]');
+        if (!banner) {
+            return;
+        }
+
+        const coarsePointerQuery = window.matchMedia('(pointer: coarse)');
+        const isMobileLike = typeof coarsePointerQuery.matches === 'boolean'
+            ? coarsePointerQuery.matches
+            : /android|iphone|ipad|ipod/i.test(window.navigator.userAgent);
+        if (!isMobileLike) {
+            return;
+        }
+
+        const storageKey = 'bhPwaInstallDismissed';
+        const storage = window.localStorage;
+        let deferredPrompt = null;
+
+        const guide = document.querySelector('[data-pwa-install-guide]');
+        const guideDismiss = guide ? guide.querySelector('[data-pwa-install-guide-dismiss]') : null;
+        const guideClose = guide ? guide.querySelector('[data-pwa-install-guide-close]') : null;
+        const guideContent = guide ? guide.querySelector('[data-pwa-install-guide-content]') : null;
+        const guideVariants = guideContent
+            ? {
+                ios: guideContent.querySelector('[data-pwa-guide-ios]'),
+                android: guideContent.querySelector('[data-pwa-guide-android]'),
+                generic: guideContent.querySelector('[data-pwa-guide-generic]'),
+            }
+            : null;
+        let guideActive = false;
+
+        const detectPlatform = () => {
+            const ua = window.navigator.userAgent || '';
+            if (/iphone|ipad|ipod/i.test(ua)) {
+                return 'ios';
+            }
+            if (/android/i.test(ua)) {
+                return 'android';
+            }
+            return 'generic';
+        };
+
+        const hideGuide = () => {
+            if (!guide) {
+                return;
+            }
+            guide.classList.add('hidden');
+            guide.setAttribute('aria-hidden', 'true');
+            guideActive = false;
+        };
+
+        const showGuide = (variant) => {
+            if (!guide || !guideVariants) {
+                return;
+            }
+
+            Object.keys(guideVariants).forEach((key) => {
+                const block = guideVariants[key];
+                if (block) {
+                    block.classList.toggle('hidden', key !== variant);
+                }
+            });
+
+            if (!guideVariants[variant]) {
+                const generic = guideVariants.generic;
+                if (generic) {
+                    generic.classList.remove('hidden');
+                }
+            }
+
+            guide.classList.remove('hidden');
+            guide.setAttribute('aria-hidden', 'false');
+            guideActive = true;
+        };
+
+        const wasDismissed = (() => {
+            try {
+                return storage.getItem(storageKey) === '1';
+            } catch (error) {
+                return false;
+            }
+        })();
+        if (wasDismissed) {
+            return;
+        }
+
+        const trigger = banner.querySelector('[data-pwa-install-trigger]');
+        const dismiss = banner.querySelector('[data-pwa-install-dismiss]');
+
+        const setBannerVisibility = (visible) => {
+            banner.classList.toggle('hidden', !visible);
+            banner.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        };
+
+        const persistDismiss = () => {
+            try {
+                storage.setItem(storageKey, '1');
+            } catch (error) {
+                // Ignore storage restrictions (e.g. Safari private mode).
+            }
+        };
+
+        const isStandalone = () =>
+            window.matchMedia('(display-mode: standalone)').matches ||
+            window.matchMedia('(display-mode: fullscreen)').matches ||
+            window.navigator.standalone === true;
+
+        setBannerVisibility(false);
+        banner.setAttribute('aria-live', 'polite');
+
+        window.addEventListener('beforeinstallprompt', (event) => {
+            event.preventDefault();
+            deferredPrompt = event;
+            if (!isStandalone()) {
+                setBannerVisibility(true);
+            }
+        });
+
+        if (trigger) {
+            trigger.addEventListener('click', async () => {
+                if (!deferredPrompt) {
+                    const platform = detectPlatform();
+                    showGuide(platform);
+                    return;
+                }
+
+                trigger.disabled = true;
+                try {
+                    deferredPrompt.prompt();
+                    const choice = await deferredPrompt.userChoice;
+                    if (choice && choice.outcome === 'accepted') {
+                        persistDismiss();
+                    }
+                } catch (error) {
+                    console.warn('PWA install prompt error:', error);
+                } finally {
+                    trigger.disabled = false;
+                    setBannerVisibility(false);
+                    deferredPrompt = null;
+                }
+            });
+        }
+
+        if (dismiss) {
+            dismiss.addEventListener('click', () => {
+                setBannerVisibility(false);
+                persistDismiss();
+                deferredPrompt = null;
+            });
+        }
+
+        if (guide) {
+            const closeGuide = () => {
+                hideGuide();
+            };
+
+            if (guideDismiss) {
+                guideDismiss.addEventListener('click', closeGuide);
+            }
+
+            if (guideClose) {
+                guideClose.addEventListener('click', closeGuide);
+            }
+
+            guide.addEventListener('click', (event) => {
+                if (event.target === guide) {
+                    hideGuide();
+                }
+            });
+
+            window.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && guideActive) {
+                    hideGuide();
+                }
+            });
+        }
+
+        window.addEventListener('appinstalled', () => {
+            setBannerVisibility(false);
+            persistDismiss();
+            deferredPrompt = null;
+        });
+
+        window.setTimeout(() => {
+            if (!deferredPrompt && !isStandalone() && /iphone|ipad|ipod/i.test(window.navigator.userAgent)) {
+                setBannerVisibility(true);
+            }
+        }, 2500);
+    };
+
+    initPwaInstallPrompt();
+
     const pushSetupContainer = document.querySelector('[data-push-setup]');
     if (pushSetupContainer) {
         initPushModule(pushSetupContainer);

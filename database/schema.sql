@@ -69,6 +69,23 @@ CREATE TABLE `password_resets` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- Table: user_consents
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS `user_consents`;
+CREATE TABLE `user_consents` (
+    `user_id` INT UNSIGNED NOT NULL,
+    `cookie_consent_at` DATETIME DEFAULT NULL,
+    `privacy_policy_accepted_at` DATETIME DEFAULT NULL,
+    `data_processing_acknowledged_at` DATETIME DEFAULT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`user_id`),
+    CONSTRAINT `user_consents_user_id_foreign`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- Table: news
 -- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS `news`;

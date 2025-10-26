@@ -101,14 +101,51 @@ for ($index = 0; $index < $maxItems; $index++) {
                     <a href="?page=community" class="text-xs uppercase tracking-wide text-gray-400 hover:text-white">Vedi tutto</a>
                 </div>
                 <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                    <?php foreach ($fanSpotlight as $item): ?>
-                        <article class="relative overflow-hidden rounded-2xl border border-white/10 bg-black/40">
-                            <img src="<?php echo htmlspecialchars($item['image'], ENT_QUOTES, 'UTF-8'); ?>" alt="<?php echo htmlspecialchars($item['title'], ENT_QUOTES, 'UTF-8'); ?>" class="h-36 w-full object-cover">
-                            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-3 py-2">
-                                <p class="text-xs font-semibold text-white line-clamp-2"><?php echo htmlspecialchars($item['title'], ENT_QUOTES, 'UTF-8'); ?></p>
+                    <?php if (!empty($fanSpotlight)): ?>
+                        <?php foreach ($fanSpotlight as $item):
+                            $permalink = isset($item['permalink']) && $item['permalink'] !== '' ? $item['permalink'] : '?page=community';
+                            $credit = trim((string) ($item['credit'] ?? ''));
+                            $humanTime = isset($item['published_at']) ? getHumanTimeDiff((int) $item['published_at']) : '';
+                            $authorLabel = trim((string) ($item['author'] ?? ''));
+                            $captionText = trim((string) ($item['caption'] ?? ''));
+                        ?>
+                            <article class="group relative overflow-hidden rounded-2xl border border-white/10 bg-black/40">
+                                <a href="<?php echo htmlspecialchars($permalink, ENT_QUOTES, 'UTF-8'); ?>" class="block h-full">
+                                    <div class="relative h-full">
+                                        <img src="<?php echo htmlspecialchars($item['image'], ENT_QUOTES, 'UTF-8'); ?>" alt="<?php echo htmlspecialchars($item['title'], ENT_QUOTES, 'UTF-8'); ?>" class="h-40 w-full object-cover transition-transform duration-500 group-hover:scale-105">
+                                        <div class="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black via-black/70 to-transparent px-3 py-3">
+                                            <?php if ($credit !== ''): ?>
+                                                <span class="text-[0.6rem] font-semibold uppercase tracking-wide text-gray-300"><?php echo htmlspecialchars($credit, ENT_QUOTES, 'UTF-8'); ?></span>
+                                            <?php endif; ?>
+                                            <p class="mt-1 text-sm font-semibold text-white line-clamp-2"><?php echo htmlspecialchars($item['title'], ENT_QUOTES, 'UTF-8'); ?></p>
+                                            <?php if ($captionText !== ''): ?>
+                                                <p class="mt-1 text-xs text-gray-200 line-clamp-2"><?php echo htmlspecialchars($captionText, ENT_QUOTES, 'UTF-8'); ?></p>
+                                            <?php endif; ?>
+                                            <div class="mt-2 flex items-center justify-between text-[0.6rem] uppercase tracking-wide text-gray-400">
+                                                <span><?php echo htmlspecialchars($authorLabel !== '' ? $authorLabel : 'Community', ENT_QUOTES, 'UTF-8'); ?></span>
+                                                <?php if ($humanTime !== ''): ?>
+                                                    <span><?php echo htmlspecialchars($humanTime, ENT_QUOTES, 'UTF-8'); ?></span>
+                                                <?php endif; ?>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </a>
+                            </article>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <article class="flex h-full flex-col justify-between rounded-2xl border border-dashed border-white/20 bg-black/40 p-4 text-sm text-gray-300 sm:col-span-2 lg:col-span-2">
+                            <div class="space-y-2">
+                                <p class="text-sm font-semibold text-white">La community deve ancora caricare la prima storia.</p>
+                                <p>Condividi foto, racconti o grafiche bianconere per inaugurare la Raccolta Storie.</p>
                             </div>
+                            <a href="?page=community" class="mt-4 inline-flex items-center gap-2 self-start rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-all hover:bg-juventus-silver">
+                                Carica la tua storia
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-4 w-4">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                                </svg>
+                            </a>
                         </article>
-                    <?php endforeach; ?>
+                    <?php endif; ?>
                     <?php foreach ($upcomingMatches as $match): ?>
                         <article class="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/15 to-white/0 p-4">
                             <p class="text-[0.65rem] font-semibold uppercase tracking-wide text-gray-300">Matchday</p>

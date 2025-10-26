@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BianconeriHub ⭐⭐⭐ • Offline</title>
+    <meta name="description" content="Sei offline, ma BianconeriHub ti aspetta con news e community appena torni connesso.">
+    <link rel="icon" type="image/png" sizes="32x32" href="/uploads/favicon.png">
+    <link rel="stylesheet" href="/assets/css/tailwind.css">
+    <style>
+        .noise-bg {
+            background-image: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.12), transparent 55%),
+                              radial-gradient(circle at 80% 0%, rgba(255, 255, 255, 0.08), transparent 60%);
+        }
+    </style>
+</head>
+<body class="noise-bg min-h-screen bg-black text-white">
+    <main class="flex min-h-screen flex-col items-center justify-center px-6 py-12 text-center">
+        <img src="/uploads/favicon.png" alt="BianconeriHub" class="mb-6 h-16 w-16 rounded-3xl border border-white/20 bg-white/10 p-3">
+        <h1 class="text-2xl font-semibold">Sei offline</h1>
+        <p class="mt-3 max-w-md text-sm text-gray-300">Nessun problema: appena torni online ricaricheremo automaticamente la curva digitale bianconera.</p>
+        <button type="button" class="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-sm font-semibold tracking-wide text-black transition-all hover:bg-juventus-silver" onclick="window.location.reload()">
+            Riprova ora
+        </button>
+        <p class="mt-2 text-xs uppercase tracking-wide text-gray-400">BianconeriHub ⭐⭐⭐</p>
+    </main>
+    <script>
+        window.addEventListener('online', () => {
+            window.location.reload();
+        });
+    </script>
+</body>
+</html>

@@ -237,7 +237,10 @@ if ($requestMethod === 'POST') {
 
         if ($registration['success']) {
             $user = $registration['user'];
-            attemptLogin($user['username'], $_POST['password']);
+            $loginResult = attemptLogin($user['username'], $_POST['password']);
+            if (!empty($loginResult['success'])) {
+                grantDefaultPrivacyConsents();
+            }
             clearOldInput();
             setFlash('auth', 'Registrazione completata! Benvenuto/a ' . htmlspecialchars($user['username'], ENT_QUOTES, 'UTF-8') . '.', 'success');
             header('Location: ?page=community');

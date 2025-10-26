@@ -495,6 +495,51 @@ function sendWelcomeEmail(array $user): void
     sendEmailMessage($email, $subject, $html, $text, $displayName);
 }
 
+function notifyAdminNewRegistration(array $user): void
+{
+    $adminEmail = 'ag.servizi16@gmail.com';
+    if (!filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
+        return;
+    }
+
+    $username = trim((string) ($user['username'] ?? ''));
+    $email = trim((string) ($user['email'] ?? ''));
+    $displayName = buildUserDisplayName($user['first_name'] ?? null, $user['last_name'] ?? null, $username);
+    try {
+        $registeredAt = (new DateTimeImmutable('now', new DateTimeZone('Europe/Rome')))->format('d/m/Y H:i');
+    } catch (Throwable $exception) {
+        $registeredAt = date('d/m/Y H:i');
+    }
+
+    $subject = $username !== ''
+        ? 'Nuova registrazione: ' . $username
+        : 'Nuova registrazione su BianconeriHub';
+
+    $paragraphs = [
+        'Ciao,',
+        'Un nuovo tifoso ha appena completato la registrazione su BianconeriHub.',
+        'Nome visualizzato: ' . ($displayName !== '' ? $displayName : 'Non specificato'),
+        'Username: ' . ($username !== '' ? $username : 'Non specificato'),
+        'Email: ' . ($email !== '' ? $email : 'Non specificata'),
+        'Registrato il: ' . $registeredAt,
+    ];
+
+    $footerLines = [
+        '© ' . date('Y') . ' BianconeriHub. Monitoraggio registrazioni automatico.',
+    ];
+
+    $html = renderEmailLayout([
+        'title' => 'Nuovo utente iscritto',
+        'preheader' => 'Un nuovo tifoso ha aderito alla community.',
+        'paragraphs' => $paragraphs,
+        'footer' => $footerLines,
+    ]);
+
+    $text = buildEmailPlainText('Nuovo utente iscritto', $paragraphs, null, null, $footerLines);
+
+    sendEmailMessage($adminEmail, $subject, $html, $text, 'AG Servizi');
+}
+
 function sendPasswordResetEmail(array $user, string $token, DateTimeInterface $expiresAt): bool
 {
     $email = trim((string) ($user['email'] ?? ''));
@@ -1104,6 +1149,8 @@ function syncJuventusMatchesFromApi(bool $force = false): void
     ensureMatchesTableSupportsExternalSource($pdo);
 
     try {
+        ensureUserConsentsTable($pdo);
+
         $pdo->beginTransaction();
 
         $delete = $pdo->prepare('DELETE FROM matches WHERE source = :source AND kickoff_at >= (NOW() - INTERVAL 30 DAY)');
@@ -1514,48 +1561,121 @@ function getCommunityStories(int $limit = 8): array
 
 function getFanSpotlight(): array
 {
-    $stories = getCommunityStories(8);
+    $limit = 8;
+    $stories = getCommunityStories($limit);
 
-    if (!empty($stories)) {
-        return array_map(static function (array $story): array {
-            $credit = $story['credit'] ?? '';
-            if ($credit === '' && !empty($story['author'])) {
-                $credit = '@' . ltrim((string) $story['author'], '@');
-            }
+    $spotlight = [];
+    $seenIds = [];
 
-            return [
-                'id' => $story['id'],
-                'title' => $story['title'],
-                'caption' => $story['caption'],
-                'image' => $story['image'],
-                'credit' => $credit,
-                'author' => $story['author'] ?? 'Tifoso',
-                'badge' => $story['badge'] ?? 'Tifoso',
-                'published_at' => $story['published_at'] ?? time(),
-            ];
-        }, $stories);
+    foreach ($stories as $story) {
+        $storyId = (int) ($story['id'] ?? 0);
+        if ($storyId <= 0) {
+            continue;
+        }
+
+        $credit = trim((string) ($story['credit'] ?? ''));
+        $authorHandle = isset($story['author']) ? (string) $story['author'] : '';
+        if ($credit === '' && $authorHandle !== '') {
+            $credit = '@' . ltrim($authorHandle, '@');
+        }
+
+        $spotlight[] = [
+            'id' => $storyId,
+            'title' => trim((string) ($story['title'] ?? '')),
+            'caption' => trim((string) ($story['caption'] ?? '')),
+            'image' => trim((string) ($story['image'] ?? '')),
+            'credit' => $credit,
+            'author' => $story['author'] ?? 'Tifoso',
+            'badge' => $story['badge'] ?? 'Tifoso',
+            'published_at' => $story['published_at'] ?? time(),
+            'permalink' => '?page=community#post-' . $storyId,
+        ];
+
+        $seenIds[$storyId] = true;
     }
 
-    return [
-        [
-            'title' => 'Curva Sud in festa',
-            'caption' => 'Un mare di sciarpe contro il Milan. Passione che non dorme mai.',
-            'image' => 'https://images.unsplash.com/photo-1489515217757-5fd1be406fef?auto=format&fit=crop&w=960&q=80',
-            'credit' => '@bianconera_crew',
-        ],
-        [
-            'title' => 'Trasferta europea',
-            'caption' => 'I tifosi in viaggio verso l’Allianz Arena per sostenere la squadra.',
-            'image' => 'https://images.unsplash.com/photo-1461896836934-ffe607ba8211?auto=format&fit=crop&w=960&q=80',
-            'credit' => '@juventusworld',
-        ],
-        [
-            'title' => 'Generazioni bianconere',
-            'caption' => 'Una famiglia allo stadio a tramandare l’amore per la Vecchia Signora.',
-            'image' => 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=960&q=80',
-            'credit' => '@famigliajuve',
-        ],
-    ];
+    if (count($spotlight) < $limit) {
+        $candidates = getCommunityPosts(0, $limit * 3);
+
+        foreach ($candidates as $post) {
+            $postId = (int) ($post['id'] ?? 0);
+            if ($postId <= 0 || isset($seenIds[$postId])) {
+                continue;
+            }
+
+            $type = strtolower((string) ($post['content_type'] ?? 'text'));
+            if (!in_array($type, ['story', 'photo', 'gallery'], true)) {
+                continue;
+            }
+
+            $coverPath = '';
+            if (!empty($post['media']) && is_array($post['media'])) {
+                $firstMedia = $post['media'][0] ?? [];
+                $coverPath = trim((string) ($firstMedia['path'] ?? ''));
+            }
+
+            if ($coverPath === '') {
+                $coverPath = trim((string) ($post['media_url'] ?? ''));
+            }
+
+            if ($coverPath === '') {
+                continue;
+            }
+
+            $title = trim((string) ($post['story_title'] ?? ''));
+            if ($title === '') {
+                $plainContent = trim(preg_replace('/\s+/', ' ', strip_tags((string) ($post['content_rendered'] ?? ''))));
+                if ($plainContent !== '') {
+                    if (mb_strlen($plainContent) > 80) {
+                        $title = mb_substr($plainContent, 0, 77) . '...';
+                    } else {
+                        $title = $plainContent;
+                    }
+                } else {
+                    $authorDisplay = trim((string) ($post['author_display_name'] ?? ($post['author'] ?? 'Tifoso')));
+                    $title = 'Momento condiviso da ' . ($authorDisplay !== '' ? $authorDisplay : 'tifoso');
+                }
+            }
+
+            $caption = trim((string) ($post['story_caption'] ?? ''));
+            if ($caption === '') {
+                $plainContent = trim(preg_replace('/\s+/', ' ', strip_tags((string) ($post['content_rendered'] ?? ''))));
+                if ($plainContent !== '') {
+                    $caption = mb_strlen($plainContent) > 140
+                        ? mb_substr($plainContent, 0, 137) . '...'
+                        : $plainContent;
+                }
+            } elseif (mb_strlen($caption) > 140) {
+                $caption = mb_substr($caption, 0, 137) . '...';
+            }
+
+            $credit = trim((string) ($post['story_credit'] ?? ''));
+            $authorHandle = isset($post['author_username']) ? (string) $post['author_username'] : (string) ($post['author'] ?? '');
+            if ($credit === '' && $authorHandle !== '') {
+                $credit = '@' . ltrim($authorHandle, '@');
+            }
+
+            $spotlight[] = [
+                'id' => $postId,
+                'title' => $title,
+                'caption' => $caption,
+                'image' => $coverPath,
+                'credit' => $credit,
+                'author' => $post['author_display_name'] ?? ($post['author'] ?? 'Tifoso'),
+                'badge' => $post['badge'] ?? 'Tifoso',
+                'published_at' => $post['published_at'] ?? time(),
+                'permalink' => '?page=community#post-' . $postId,
+            ];
+
+            $seenIds[$postId] = true;
+
+            if (count($spotlight) >= $limit) {
+                break;
+            }
+        }
+    }
+
+    return $spotlight;
 }
 
 // Register pages for the simple router
@@ -1942,6 +2062,81 @@ function userProfilesTableAvailable(?PDO $connection = null): bool
     return $cache;
 }
 
+function ensureUserConsentsTable(PDO $pdo): void
+{
+    static $checked = false;
+
+    if ($checked) {
+        return;
+    }
+
+    try {
+        $pdo->exec('CREATE TABLE IF NOT EXISTS user_consents (
+            user_id INT UNSIGNED NOT NULL,
+            cookie_consent_at DATETIME DEFAULT NULL,
+            privacy_policy_accepted_at DATETIME DEFAULT NULL,
+            data_processing_acknowledged_at DATETIME DEFAULT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id),
+            CONSTRAINT user_consents_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+        $checked = true;
+    } catch (PDOException $exception) {
+        error_log('[BianconeriHub] Unable to ensure user_consents table: ' . $exception->getMessage());
+        $checked = false;
+    }
+}
+
+function recordDefaultUserConsents(PDO $pdo, int $userId): void
+{
+    if ($userId <= 0) {
+        return;
+    }
+
+    ensureUserConsentsTable($pdo);
+
+    try {
+        $timestamp = (new DateTimeImmutable())->format('Y-m-d H:i:s');
+        $statement = $pdo->prepare('INSERT INTO user_consents (user_id, cookie_consent_at, privacy_policy_accepted_at, data_processing_acknowledged_at) VALUES (:user_id, :ts_insert, :ts_insert, :ts_insert) ON DUPLICATE KEY UPDATE cookie_consent_at = :ts_update, privacy_policy_accepted_at = :ts_update, data_processing_acknowledged_at = :ts_update');
+        $statement->execute([
+            'user_id' => $userId,
+            'ts_insert' => $timestamp,
+            'ts_update' => $timestamp,
+        ]);
+    } catch (Throwable $exception) {
+        error_log('[BianconeriHub] Unable to record default user consents: ' . $exception->getMessage());
+    }
+}
+
+function grantDefaultPrivacyConsents(): void
+{
+    $grantedAt = time();
+    $_SESSION['bh_cookie_consent'] = true;
+    $_SESSION['bh_privacy_consent'] = true;
+    $_SESSION['bh_consent_granted_at'] = $grantedAt;
+
+    $secure = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $expiresAt = $grantedAt + (365 * 24 * 60 * 60);
+    $options = [
+        'expires' => $expiresAt,
+        'path' => '/',
+        'secure' => $secure,
+        'httponly' => false,
+        'samesite' => $secure ? 'None' : 'Lax',
+    ];
+
+    $cookieNames = ['bh_cookie_consent', 'bh_privacy_consent', 'bh_data_processing_consent'];
+    $canSendHeaders = !headers_sent();
+
+    foreach ($cookieNames as $name) {
+        $_COOKIE[$name] = 'accepted';
+        if ($canSendHeaders) {
+            setcookie($name, 'accepted', $options);
+        }
+    }
+}
+
 function getCommunityFollowersCount(int $userId): int
 {
     if ($userId <= 0) {
@@ -2267,6 +2462,83 @@ function determineProfileImageFormats(string $mime): array
     }
 
     return array_values(array_unique($formats));
+}
+
+function getCommunityImageProcessingLimits(): array
+{
+    return ['max_width' => 1920, 'max_height' => 1920];
+}
+
+function optimiseCommunityImageWithGd(string $sourcePath, string $mime, string $targetDirectory, string $baseName, int $maxBytes): array
+{
+    if (!extension_loaded('gd') || !function_exists('imagecreatetruecolor')) {
+        return ['success' => false, 'message' => 'L\'ottimizzazione immagini non è disponibile sul server.'];
+    }
+
+    $sourceImage = loadProfileImageResource($sourcePath, $mime);
+    if (!$sourceImage) {
+        return ['success' => false, 'message' => 'Formato immagine non supportato.'];
+    }
+
+    if (function_exists('imagepalettetotruecolor')) {
+        imagepalettetotruecolor($sourceImage);
+    }
+
+    if ($mime === 'image/jpeg') {
+        $oriented = applyExifOrientationToImage($sourceImage, $sourcePath);
+        if ($oriented !== $sourceImage) {
+            imagedestroy($sourceImage);
+            $sourceImage = $oriented;
+        }
+    }
+
+    $sourceWidth = imagesx($sourceImage);
+    $sourceHeight = imagesy($sourceImage);
+    if ($sourceWidth <= 0 || $sourceHeight <= 0) {
+        imagedestroy($sourceImage);
+        return ['success' => false, 'message' => 'Impossibile leggere le dimensioni dell\'immagine.'];
+    }
+
+    $limits = getCommunityImageProcessingLimits();
+    $scaleLimit = min(
+        $limits['max_width'] / max($sourceWidth, 1),
+        $limits['max_height'] / max($sourceHeight, 1),
+        1.0
+    );
+
+    if ($scaleLimit <= 0 || !is_finite($scaleLimit)) {
+        $scaleLimit = 1.0;
+    }
+
+    $formats = determineProfileImageFormats($mime);
+    if (empty($formats)) {
+        imagedestroy($sourceImage);
+        return ['success' => false, 'message' => 'Nessun formato di salvataggio disponibile.'];
+    }
+
+    $lastError = 'Impossibile ottimizzare l\'immagine caricata.';
+    foreach ($formats as $format) {
+        $extension = $format === 'jpeg' ? 'jpg' : $format;
+        $filename = $baseName . '.' . $extension;
+        $destination = rtrim($targetDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename;
+
+        $result = saveOptimizedProfileImage($sourceImage, $sourceWidth, $sourceHeight, $destination, $format, $scaleLimit, $maxBytes);
+
+        if ($result['success']) {
+            imagedestroy($sourceImage);
+            return [
+                'success' => true,
+                'filename' => $filename,
+                'mime' => $format === 'jpeg' ? 'image/jpeg' : 'image/' . $extension,
+            ];
+        }
+
+        $lastError = $result['message'] ?? $lastError;
+    }
+
+    imagedestroy($sourceImage);
+
+    return ['success' => false, 'message' => $lastError];
 }
 
 function saveOptimizedProfileImage($sourceImage, int $sourceWidth, int $sourceHeight, string $destination, string $format, float $scaleLimit, int $maxBytes): array
@@ -3293,6 +3565,7 @@ function registerUser(array $payload): array
         ]);
 
         $userId = (int) $pdo->lastInsertId();
+        recordDefaultUserConsents($pdo, $userId);
         $pdo->commit();
 
         $userData = [
@@ -3306,6 +3579,7 @@ function registerUser(array $payload): array
         ];
 
         sendWelcomeEmail($userData);
+        notifyAdminNewRegistration($userData);
 
         return [
             'success' => true,
@@ -5594,6 +5868,9 @@ function handleCommunityPhotoUpload(array $file): array
         return ['success' => false, 'message' => 'Formato immagine non supportato. Usa JPEG, PNG, WEBP o GIF.'];
     }
 
+    $maxOptimizedBytes = 200 * 1024;
+    $isGif = $mime === 'image/gif';
+
     $baseDir = resolveCommunityUploadDirectory();
     $subDir = date('Y') . DIRECTORY_SEPARATOR . date('m');
     $targetDir = $baseDir . DIRECTORY_SEPARATOR . $subDir;
@@ -5609,24 +5886,63 @@ function handleCommunityPhotoUpload(array $file): array
     } catch (Throwable $exception) {
         $random = bin2hex(openssl_random_pseudo_bytes(8));
     }
+    $baseFilename = date('YmdHis') . '-' . $random;
+    $finalFilename = null;
+    $absolutePath = null;
+    $finalMime = $mime;
 
-    $filename = date('YmdHis') . '-' . $random . '.' . $extension;
-    $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $filename;
+    if ($isGif) {
+        if ($size > $maxOptimizedBytes) {
+            return ['success' => false, 'message' => 'Le GIF devono pesare al massimo 200 KB. Riduci l\'animazione e riprova.'];
+        }
 
-    if (!move_uploaded_file($tmpName, $absolutePath)) {
+        $finalFilename = $baseFilename . '.gif';
+        $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $finalFilename;
+
+        if (!move_uploaded_file($tmpName, $absolutePath)) {
+            return ['success' => false, 'message' => 'Impossibile salvare la foto caricata.'];
+        }
+    } else {
+        $optimized = optimiseCommunityImageWithGd($tmpName, $mime, $targetDir, $baseFilename, $maxOptimizedBytes);
+
+        if ($optimized['success']) {
+            $finalFilename = $optimized['filename'];
+            $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $finalFilename;
+            $finalMime = $optimized['mime'] ?? $finalMime;
+            @unlink($tmpName);
+        } elseif ($size <= $maxOptimizedBytes) {
+            $finalFilename = $baseFilename . '.' . $extension;
+            $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $finalFilename;
+
+            if (!move_uploaded_file($tmpName, $absolutePath)) {
+                return ['success' => false, 'message' => 'Impossibile salvare la foto caricata.'];
+            }
+        } else {
+            $errorMessage = $optimized['message'] ?? 'Impossibile ottimizzare automaticamente la foto. Riducila manualmente e riprova.';
+            return ['success' => false, 'message' => $errorMessage];
+        }
+    }
+
+    if (!$absolutePath || !is_file($absolutePath)) {
         return ['success' => false, 'message' => 'Impossibile salvare la foto caricata.'];
     }
 
     @chmod($absolutePath, 0644);
 
+    $finalSize = @filesize($absolutePath);
+    if ($finalSize !== false && $finalSize > $maxOptimizedBytes && $finalMime !== 'image/gif') {
+        @unlink($absolutePath);
+        return ['success' => false, 'message' => 'Non è stato possibile ridurre la foto sotto i 200 KB. Riducila manualmente e riprova.'];
+    }
+
     $relativeSubDir = str_replace(DIRECTORY_SEPARATOR, '/', $subDir);
-    $relativePath = 'uploads/community/' . $relativeSubDir . '/' . $filename;
+    $relativePath = 'uploads/community/' . $relativeSubDir . '/' . $finalFilename;
 
     return [
         'success' => true,
         'relative_path' => $relativePath,
         'absolute_path' => $absolutePath,
-        'mime' => $mime,
+        'mime' => $finalMime,
     ];
 }
 
@@ -5669,6 +5985,9 @@ function handleCommunityClipboardUpload(string $dataUrl, string $originalName = 
         return ['success' => false, 'message' => 'Formato immagine non supportato. Usa JPEG, PNG, WEBP o GIF.'];
     }
 
+    $maxOptimizedBytes = 200 * 1024;
+    $binaryLength = strlen($binary);
+
     $baseDir = resolveCommunityUploadDirectory();
     $subDir = date('Y') . DIRECTORY_SEPARATOR . date('m');
     $targetDir = $baseDir . DIRECTORY_SEPARATOR . $subDir;
@@ -5688,24 +6007,78 @@ function handleCommunityClipboardUpload(string $dataUrl, string $originalName = 
     $originalBase = trim(pathinfo($originalName, PATHINFO_FILENAME)) ?: 'clipboard';
     $sanitizedBase = preg_replace('/[^a-z0-9\-]+/i', '-', strtolower($originalBase));
     $sanitizedBase = trim($sanitizedBase, '-') ?: 'clipboard';
+    $baseFilename = sprintf('%s-%s-%s', date('YmdHis'), $sanitizedBase, $random);
+    $finalFilename = null;
+    $absolutePath = null;
+    $finalMime = $mime;
 
-    $filename = $sanitizedBase . '-' . $random . '.' . $extension;
-    $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $filename;
+    $temporary = @tempnam($targetDir, 'clip-');
+    if ($temporary === false) {
+        return ['success' => false, 'message' => 'Impossibile salvare l’immagine incollata.'];
+    }
 
-    if (file_put_contents($absolutePath, $binary) === false) {
+    if (file_put_contents($temporary, $binary) === false) {
+        @unlink($temporary);
+        return ['success' => false, 'message' => 'Impossibile salvare l’immagine incollata.'];
+    }
+
+    if ($mime === 'image/gif') {
+        if ($binaryLength > $maxOptimizedBytes) {
+            @unlink($temporary);
+            return ['success' => false, 'message' => 'Le GIF devono pesare al massimo 200 KB. Riduci l\'animazione e riprova.'];
+        }
+
+        $finalFilename = $baseFilename . '.gif';
+        $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $finalFilename;
+
+        if (!@rename($temporary, $absolutePath)) {
+            if (!@copy($temporary, $absolutePath)) {
+                @unlink($temporary);
+                return ['success' => false, 'message' => 'Impossibile salvare l’immagine incollata.'];
+            }
+            @unlink($temporary);
+        }
+    } else {
+        $optimized = optimiseCommunityImageWithGd($temporary, $mime, $targetDir, $baseFilename, $maxOptimizedBytes);
+        @unlink($temporary);
+
+        if ($optimized['success']) {
+            $finalFilename = $optimized['filename'];
+            $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $finalFilename;
+            $finalMime = $optimized['mime'] ?? $finalMime;
+        } elseif ($binaryLength <= $maxOptimizedBytes) {
+            $finalFilename = $baseFilename . '.' . $extension;
+            $absolutePath = $targetDir . DIRECTORY_SEPARATOR . $finalFilename;
+
+            if (file_put_contents($absolutePath, $binary) === false) {
+                return ['success' => false, 'message' => 'Impossibile salvare l’immagine incollata.'];
+            }
+        } else {
+            $errorMessage = $optimized['message'] ?? 'Impossibile ottimizzare automaticamente la foto. Riducila manualmente e riprova.';
+            return ['success' => false, 'message' => $errorMessage];
+        }
+    }
+
+    if (!$absolutePath || !is_file($absolutePath)) {
         return ['success' => false, 'message' => 'Impossibile salvare l’immagine incollata.'];
     }
 
     @chmod($absolutePath, 0644);
 
+    $finalSize = @filesize($absolutePath);
+    if ($finalSize !== false && $finalSize > $maxOptimizedBytes && $finalMime !== 'image/gif') {
+        @unlink($absolutePath);
+        return ['success' => false, 'message' => 'Non è stato possibile ridurre la foto sotto i 200 KB. Riducila manualmente e riprova.'];
+    }
+
     $relativeSubDir = str_replace(DIRECTORY_SEPARATOR, '/', $subDir);
-    $relativePath = 'uploads/community/' . $relativeSubDir . '/' . $filename;
+    $relativePath = 'uploads/community/' . $relativeSubDir . '/' . $finalFilename;
 
     return [
         'success' => true,
         'relative_path' => $relativePath,
         'absolute_path' => $absolutePath,
-        'mime' => $mime,
+        'mime' => $finalMime,
     ];
 }
 

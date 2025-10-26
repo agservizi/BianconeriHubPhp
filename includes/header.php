@@ -77,6 +77,9 @@ $profileSearchQuery = '';
 if (($currentPage ?? '') === 'profile_search') {
     $profileSearchQuery = trim((string) ($_GET['q'] ?? ''));
 }
+$faviconUrl = appUrl('uploads/favicon.png');
+$manifestUrl = appUrl('manifest.webmanifest');
+$themeColor = '#000000';
 ?>
 <!DOCTYPE html>
 <html lang="it">
@@ -84,11 +87,21 @@ if (($currentPage ?? '') === 'profile_search') {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="BianconeriHub - Hub per tifosi della Juventus con notizie, risultati e community." />
+    <meta name="application-name" content="BianconeriHub ⭐⭐⭐">
+    <meta name="apple-mobile-web-app-title" content="BianconeriHub ⭐⭐⭐">
+    <meta name="theme-color" content="<?php echo htmlspecialchars($themeColor, ENT_QUOTES, 'UTF-8'); ?>">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title><?php echo htmlspecialchars($pageTitle . ' | ' . $siteName, ENT_QUOTES, 'UTF-8'); ?></title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="icon" type="image/png" href="uploads/favicon.png">
+    <link rel="manifest" href="<?php echo htmlspecialchars($manifestUrl, ENT_QUOTES, 'UTF-8'); ?>">
+    <link rel="icon" type="image/png" sizes="32x32" href="<?php echo htmlspecialchars($faviconUrl, ENT_QUOTES, 'UTF-8'); ?>">
+    <link rel="icon" type="image/png" sizes="16x16" href="<?php echo htmlspecialchars($faviconUrl, ENT_QUOTES, 'UTF-8'); ?>">
+    <link rel="apple-touch-icon" sizes="180x180" href="<?php echo htmlspecialchars($faviconUrl, ENT_QUOTES, 'UTF-8'); ?>">
+    <link rel="shortcut icon" href="<?php echo htmlspecialchars($faviconUrl, ENT_QUOTES, 'UTF-8'); ?>">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -116,7 +129,10 @@ if (($currentPage ?? '') === 'profile_search') {
                 <div class="flex items-center justify-between gap-3">
                     <a href="?page=home" class="flex items-center">
                         <div class="space-y-1">
-                            <span class="text-lg font-semibold tracking-wide uppercase">BianconeriHub ⭐⭐⭐</span>
+                            <span class="inline-flex items-center gap-1 text-lg font-semibold tracking-wide uppercase whitespace-nowrap">
+                                <span>BianconeriHub</span>
+                                <span aria-hidden="true">⭐⭐⭐</span>
+                            </span>
                             <span class="text-xs uppercase tracking-[0.3em] text-gray-400"><?php echo htmlspecialchars($siteTagline, ENT_QUOTES, 'UTF-8'); ?></span>
                         </div>
                     </a>
@@ -221,7 +237,6 @@ if (($currentPage ?? '') === 'profile_search') {
                     </div>
                     <div class="flex items-center gap-2 md:hidden">
                         <?php if ($loggedUser): ?>
-                            <span class="text-xs font-semibold uppercase tracking-wide text-white/70"><?php echo htmlspecialchars($loggedUser['badge'] ?? 'Tifoso', ENT_QUOTES, 'UTF-8'); ?></span>
                             <div class="relative md:hidden" data-nav-mentions>
                                 <button
                                     type="button"
@@ -302,6 +317,52 @@ if (($currentPage ?? '') === 'profile_search') {
                                 <path d="M6 6l12 12M6 18 18 6" />
                             </svg>
                         </button>
+                    </div>
+                </div>
+                <div class="hidden sm:hidden rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white" data-pwa-install-banner aria-hidden="true">
+                    <div class="flex flex-col gap-2">
+                        <div class="text-sm font-semibold">Installa BianconeriHub ⭐⭐⭐</div>
+                        <p class="text-xs text-gray-200">Aggiungi l'app alla schermata principale per un accesso rapido e notifiche costanti.</p>
+                        <p class="text-[0.7rem] text-gray-400">Su iPhone apri il menu Condividi e scegli "Aggiungi a Home".</p>
+                        <div class="flex items-center gap-2">
+                            <button type="button" class="flex-1 rounded-full bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-black transition-all hover:bg-juventus-silver" data-pwa-install-trigger>Installa</button>
+                            <button type="button" class="rounded-full border border-white/20 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white/80 transition-all hover:border-white/50 hover:text-white" data-pwa-install-dismiss>Più tardi</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="fixed inset-0 z-50 hidden items-end justify-center bg-black/70 px-4 py-6 sm:items-center" data-pwa-install-guide aria-hidden="true">
+                    <div class="relative w-full max-w-sm rounded-3xl border border-white/10 bg-black/95 p-6 text-white shadow-2xl" role="dialog" aria-modal="true" aria-label="Guida installazione app">
+                        <button type="button" class="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/20 text-gray-200 transition-all hover:border-white/50 hover:text-white" data-pwa-install-guide-close aria-label="Chiudi guida">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6 6l12 12M6 18 18 6" />
+                            </svg>
+                        </button>
+                        <div class="space-y-4" data-pwa-install-guide-content>
+                            <div class="hidden space-y-3" data-pwa-guide-ios>
+                                <div class="text-lg font-semibold">Installa su iPhone</div>
+                                <ol class="list-decimal list-inside space-y-2 text-sm text-gray-200">
+                                    <li>Tocca il tasto <span class="font-semibold">Condividi</span> in basso.</li>
+                                    <li>Scorri le azioni e scegli <span class="font-semibold">Aggiungi a Home</span>.</li>
+                                    <li>Conferma con <span class="font-semibold">Aggiungi</span> e l'app sarà sulla schermata principale.</li>
+                                </ol>
+                                <p class="text-xs text-gray-400">La PWA funziona anche offline e invia notifiche dalle tue community preferite.</p>
+                            </div>
+                            <div class="hidden space-y-3" data-pwa-guide-android>
+                                <div class="text-lg font-semibold">Installa su Android</div>
+                                <ol class="list-decimal list-inside space-y-2 text-sm text-gray-200">
+                                    <li>Tocca il menu <span class="font-semibold">⋮</span> in alto a destra.</li>
+                                    <li>Scegli <span class="font-semibold">Aggiungi alla schermata Home</span> o <span class="font-semibold">Installa app</span>.</li>
+                                    <li>Conferma e troverai l'icona di BianconeriHub tra le tue app.</li>
+                                </ol>
+                                <p class="text-xs text-gray-400">L'installazione offre avvio rapido e notifiche push dedicate.</p>
+                            </div>
+                            <div class="hidden space-y-3" data-pwa-guide-generic>
+                                <div class="text-lg font-semibold">Installa BianconeriHub</div>
+                                <p class="text-sm text-gray-200">Aggiungi il sito alla schermata principale dal menu del browser per usarlo come una vera app.</p>
+                                <p class="text-xs text-gray-400">Se non trovi l'opzione, aggiorna il browser o usa Chrome/Edge su Android e Safari su iOS.</p>
+                            </div>
+                        </div>
+                        <button type="button" class="mt-6 w-full rounded-full bg-white px-4 py-2 text-sm font-semibold uppercase tracking-wide text-black transition-all hover:bg-juventus-silver" data-pwa-install-guide-dismiss>Fatto</button>
                     </div>
                 </div>
                 <div class="hidden md:block">
