@@ -242,7 +242,18 @@ if ($requestMethod === 'POST') {
                 grantDefaultPrivacyConsents();
             }
             clearOldInput();
-            setFlash('auth', 'Registrazione completata! Benvenuto/a ' . htmlspecialchars($user['username'], ENT_QUOTES, 'UTF-8') . '.', 'success');
+            $baseMessage = 'Registrazione completata! Benvenuto/a ' . htmlspecialchars($user['username'], ENT_QUOTES, 'UTF-8') . '.';
+            $emailSent = !empty($registration['welcome_email_sent']);
+
+            if ($emailSent) {
+                $message = $baseMessage . ' Controlla la tua casella di posta per il messaggio di benvenuto.';
+                $variant = 'success';
+            } else {
+                $message = $baseMessage . ' Non siamo riusciti a inviarti automaticamente l\'email di conferma. Verifica l\'indirizzo inserito e, se non ricevi nulla nei prossimi minuti, contattaci.';
+                $variant = 'warning';
+            }
+
+            setFlash('auth', $message, $variant);
             header('Location: ?page=community');
             exit;
         }
@@ -253,7 +264,18 @@ if ($requestMethod === 'POST') {
             'first_name' => trim((string) ($_POST['first_name'] ?? '')),
             'last_name' => trim((string) ($_POST['last_name'] ?? '')),
         ]);
-        setFlash('auth', $registration['message'], 'error');
+        $errorMessage = $registration['message'];
+
+        if (!empty($registration['debug_message'])) {
+            $debugSuffix = ' (DEBUG: ' . $registration['debug_message'];
+            if (!empty($registration['debug_code'])) {
+                $debugSuffix .= ' | codice ' . (int) $registration['debug_code'];
+            }
+            $debugSuffix .= ')';
+            $errorMessage .= $debugSuffix;
+        }
+
+        setFlash('auth', $errorMessage, 'error');
         header('Location: ?page=register');
         exit;
     }

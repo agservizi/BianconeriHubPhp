@@ -80,20 +80,436 @@ if (($currentPage ?? '') === 'profile_search') {
 $faviconUrl = appUrl('uploads/favicon.png');
 $manifestUrl = appUrl('manifest.webmanifest');
 $themeColor = '#000000';
+
+$siteBaseUrl = rtrim(getApplicationBaseUrl(), '/');
+$seoTitle = sanitizeMetaText($pageTitle !== '' ? $pageTitle : $siteName);
+if ($seoTitle === '') {
+    $seoTitle = $siteName;
+}
+$seoFullTitle = $seoTitle;
+if (stripos($seoTitle, $siteName) === false) {
+    $seoFullTitle .= ' | ' . $siteName;
+}
+
+$seoDefaults = [
+    'description' => 'Vivi il fan club digitale dedicato alla Juventus con cronache, dibattiti e iniziative esclusive.',
+    'keywords' => 'juventus, tifosi juventini, juventus news, bianconeri, juventus community, juventus partite',
+    'robots' => 'index,follow',
+    'og_type' => 'website',
+    'twitter_card' => 'summary_large_image',
+    'twitter_site' => '@bianconerihub',
+    'twitter_creator' => '@bianconerihub',
+    'image' => getDefaultOgImageUrl(),
+    'image_alt' => 'BianconeriHub - community e notizie dedicate alla Juventus',
+];
+
+$seoOverrides = [
+    'home' => [
+        'description' => 'Notizie ufficiali, approfondimenti esclusivi e community sempre connessa: vivi la Juventus da protagonista.',
+        'keywords' => 'juventus news, community juventus, fan club juventus, juventus calendario, juventus tifosi',
+    ],
+    'news' => [
+        'description' => 'Breaking news, analisi post-partita e voci di mercato sulla Juventus aggiornate quotidianamente.',
+        'keywords' => 'juventus mercato, notizie juventus, juventus breaking news, juventus ultime notizie',
+    ],
+    'news_article' => [
+        'og_type' => 'article',
+        'twitter_card' => 'summary_large_image',
+    ],
+    'partite' => [
+        'description' => 'Calendario Juventus sempre aggiornato con orari ufficiali, stadio, dirette TV e promemoria per ogni partita.',
+        'keywords' => 'juventus calendario, partite juventus, risultati juventus, serie a juventus, champions juventus',
+    ],
+    'community' => [
+        'description' => 'La curva digitale dei tifosi: condividi post, sondaggi e cori per sostenere la Vecchia Signora ogni giorno.',
+        'keywords' => 'community juventus, forum juventus, tifosi juventini, bianconeri community',
+    ],
+    'profile' => [
+        'robots' => 'noindex,nofollow',
+    ],
+    'profile_settings' => [
+        'robots' => 'noindex,nofollow',
+    ],
+    'profile_search' => [
+        'robots' => 'noindex,nofollow',
+    ],
+    'login' => [
+        'description' => 'Accedi a BianconeriHub per gestire il tuo profilo juventino, seguire la community e partecipare ai dibattiti live.',
+        'robots' => 'noindex,nofollow',
+    ],
+    'register' => [
+        'description' => 'Registrati a BianconeriHub per ottenere badge esclusivi, contenuti extra e vivere l’esperienza juventina completa.',
+        'robots' => 'noindex,nofollow',
+    ],
+    'password_forgot' => [
+        'robots' => 'noindex,nofollow',
+    ],
+    'password_reset' => [
+        'robots' => 'noindex,nofollow',
+    ],
+    'user_profile' => [
+        'robots' => 'index,follow',
+    ],
+];
+
+$seoMeta = array_merge($seoDefaults, $seoOverrides[$routeKey] ?? []);
+
+if (!isset($seoMeta['description']) || $seoMeta['description'] === '') {
+    $seoMeta['description'] = $introCopy;
+}
+$seoMeta['description'] = sanitizeMetaText($seoMeta['description'], 160);
+
+if (!isset($seoMeta['keywords']) || $seoMeta['keywords'] === '') {
+    $seoMeta['keywords'] = $seoDefaults['keywords'];
+}
+$seoMeta['keywords'] = sanitizeMetaText($seoMeta['keywords']);
+
+$seoMeta['robots'] = sanitizeMetaText($seoMeta['robots'] ?? 'index,follow');
+if ($seoMeta['robots'] === '') {
+    $seoMeta['robots'] = 'index,follow';
+}
+
+$seoMeta['og_type'] = $seoMeta['og_type'] ?? 'website';
+$seoMeta['twitter_card'] = $seoMeta['twitter_card'] ?? 'summary_large_image';
+$seoMeta['twitter_site'] = sanitizeMetaText($seoMeta['twitter_site'] ?? '@bianconerihub');
+$seoMeta['twitter_creator'] = sanitizeMetaText($seoMeta['twitter_creator'] ?? $seoMeta['twitter_site']);
+
+$seoMeta['image'] = normalizeToAbsoluteUrl($seoMeta['image'] ?? '');
+if ($seoMeta['image'] === '') {
+    $seoMeta['image'] = getDefaultOgImageUrl();
+}
+$seoMeta['image_alt'] = sanitizeMetaText($seoMeta['image_alt'] ?? $seoTitle, 125);
+
+$canonicalContext = [
+    'slug' => is_array($activeNewsArticle ?? null) ? ($activeNewsArticle['slug'] ?? '') : '',
+    'id' => is_array($activeNewsArticle ?? null) ? ($activeNewsArticle['id'] ?? 0) : 0,
+    'username' => is_array($activeUserProfile ?? null) ? ($activeUserProfile['username'] ?? '') : '',
+    'token' => isset($_GET['token']) ? (string) $_GET['token'] : '',
+    'query' => $profileSearchQuery,
+];
+$seoMeta['canonical'] = buildCanonicalUrl($routeKey, $canonicalContext);
+$seoMeta['url'] = $seoMeta['canonical'];
+
+if ($routeKey === 'news_article') {
+    if (!empty($activeNewsArticle)) {
+        $articleDescription = sanitizeMetaText($activeNewsArticle['excerpt'] ?? '', 160);
+        if ($articleDescription !== '') {
+            $seoMeta['description'] = $articleDescription;
+        }
+        $articleTag = sanitizeMetaText($activeNewsArticle['tag'] ?? '', 0);
+        if ($articleTag !== '') {
+            $seoMeta['keywords'] = sanitizeMetaText($articleTag . ', Juventus news, BianconeriHub', 0);
+            $seoMeta['article_tag'] = $articleTag;
+        }
+        $articleImage = normalizeToAbsoluteUrl($activeNewsArticle['image'] ?? '');
+        if ($articleImage !== '') {
+            $seoMeta['image'] = $articleImage;
+            $seoMeta['image_alt'] = sanitizeMetaText($seoTitle . ' - Juventus news', 125);
+        }
+        $seoMeta['article_published_time'] = formatToIso8601($activeNewsArticle['published_at'] ?? null);
+        if (!empty($activeNewsArticle['source_url'])) {
+            $seoMeta['article_source'] = normalizeToAbsoluteUrl($activeNewsArticle['source_url']);
+        }
+    } else {
+        $seoMeta['robots'] = 'noindex,nofollow';
+    }
+}
+
+if ($routeKey === 'profile_search' && $profileSearchQuery === '') {
+    $seoMeta['robots'] = 'noindex,nofollow';
+}
+
+$seoMeta['updated_time'] = $seoMeta['article_published_time'] ?? formatToIso8601(time());
+
+$seoSameAs = [];
+$seoSameAsRaw = trim((string) env('SEO_ORG_SAME_AS', ''));
+if ($seoSameAsRaw !== '') {
+    foreach (explode(',', $seoSameAsRaw) as $link) {
+        $normalizedLink = normalizeToAbsoluteUrl($link);
+        if ($normalizedLink !== '') {
+            $seoSameAs[] = $normalizedLink;
+        }
+    }
+}
+
+$structuredGraph = [];
+
+$organizationNode = [
+    '@type' => 'Organization',
+    '@id' => $siteBaseUrl . '#organization',
+    'name' => $siteName,
+    'url' => $siteBaseUrl . '/',
+];
+if ($seoMeta['image'] !== '') {
+    $organizationNode['logo'] = $seoMeta['image'];
+}
+if (!empty($seoSameAs)) {
+    $organizationNode['sameAs'] = $seoSameAs;
+}
+$structuredGraph[] = $organizationNode;
+
+$websiteNode = [
+    '@type' => 'WebSite',
+    '@id' => $siteBaseUrl . '#website',
+    'url' => $siteBaseUrl . '/',
+    'name' => $siteName,
+    'description' => $seoMeta['description'],
+    'publisher' => ['@id' => $siteBaseUrl . '#organization'],
+    'inLanguage' => 'it-IT',
+    'potentialAction' => [[
+        '@type' => 'SearchAction',
+        'target' => appUrl('?page=profile_search&q={search_term_string}'),
+        'query-input' => 'required name=search_term_string',
+    ]],
+];
+$structuredGraph[] = $websiteNode;
+
+$breadcrumbs = [[
+    '@type' => 'ListItem',
+    'position' => 1,
+    'name' => 'Home',
+    'item' => $siteBaseUrl . '/',
+]];
+
+switch ($routeKey) {
+    case 'news':
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 2,
+            'name' => 'News',
+            'item' => appUrl('?page=news'),
+        ];
+        break;
+    case 'news_article':
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 2,
+            'name' => 'News',
+            'item' => appUrl('?page=news'),
+        ];
+        if (!empty($activeNewsArticle)) {
+            $breadcrumbs[] = [
+                '@type' => 'ListItem',
+                'position' => 3,
+                'name' => sanitizeMetaText($activeNewsArticle['title'] ?? $seoTitle, 110),
+                'item' => $seoMeta['canonical'],
+            ];
+        }
+        break;
+    case 'partite':
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 2,
+            'name' => 'Partite',
+            'item' => appUrl('?page=partite'),
+        ];
+        break;
+    case 'community':
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 2,
+            'name' => 'Community',
+            'item' => appUrl('?page=community'),
+        ];
+        break;
+    case 'user_profile':
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 2,
+            'name' => 'Community',
+            'item' => appUrl('?page=community'),
+        ];
+        if (!empty($activeUserProfile)) {
+            $displayName = sanitizeMetaText($activeUserProfile['display_name'] ?? ($activeUserProfile['username'] ?? 'Profilo tifoso'), 110);
+            $breadcrumbs[] = [
+                '@type' => 'ListItem',
+                'position' => 3,
+                'name' => $displayName,
+                'item' => $seoMeta['canonical'],
+            ];
+        }
+        break;
+    case 'profile':
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 2,
+            'name' => 'Profilo',
+            'item' => appUrl('?page=profile'),
+        ];
+        break;
+    case 'profile_settings':
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 2,
+            'name' => 'Profilo',
+            'item' => appUrl('?page=profile'),
+        ];
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 3,
+            'name' => 'Impostazioni',
+            'item' => appUrl('?page=profile_settings'),
+        ];
+        break;
+    case 'profile_search':
+        $breadcrumbs[] = [
+            '@type' => 'ListItem',
+            'position' => 2,
+            'name' => 'Ricerca tifosi',
+            'item' => appUrl('?page=profile_search'),
+        ];
+        break;
+}
+
+$breadcrumbId = $seoMeta['canonical'] . '#breadcrumb';
+
+$webPageNode = [
+    '@type' => 'WebPage',
+    '@id' => $seoMeta['canonical'] . '#webpage',
+    'url' => $seoMeta['canonical'],
+    'name' => $seoFullTitle,
+    'isPartOf' => ['@id' => $siteBaseUrl . '#website'],
+    'inLanguage' => 'it-IT',
+    'description' => $seoMeta['description'],
+];
+if (count($breadcrumbs) > 1) {
+    $webPageNode['breadcrumb'] = ['@id' => $breadcrumbId];
+}
+$structuredGraph[] = $webPageNode;
+
+if (count($breadcrumbs) > 1) {
+    $structuredGraph[] = [
+        '@type' => 'BreadcrumbList',
+        '@id' => $breadcrumbId,
+        'itemListElement' => $breadcrumbs,
+    ];
+}
+
+if (!empty($nextMatch) && isset($nextMatch['kickoff_at'])) {
+    $matchStart = formatToIso8601($nextMatch['kickoff_at']);
+    $eventNode = [
+        '@type' => 'SportsEvent',
+        '@id' => $siteBaseUrl . '#next-match',
+        'name' => sanitizeMetaText('Juventus vs ' . ($matchOpponent !== '' ? $matchOpponent : 'Avversario da definire'), 120),
+        'eventAttendanceMode' => 'https://schema.org/OfflineEventAttendanceMode',
+        'eventStatus' => 'https://schema.org/EventScheduled',
+        'competitor' => [
+            ['@type' => 'SportsTeam', 'name' => 'Juventus'],
+            ['@type' => 'SportsTeam', 'name' => sanitizeMetaText($matchOpponent !== '' ? $matchOpponent : 'Avversario da definire', 60)],
+        ],
+        'organizer' => ['@id' => $siteBaseUrl . '#organization'],
+        'sport' => sanitizeMetaText($matchCompetition !== '' ? $matchCompetition : 'Calcio', 60),
+        'url' => appUrl('?page=partite'),
+    ];
+    if ($matchStart !== null) {
+        $eventNode['startDate'] = $matchStart;
+    }
+    if ($matchVenue !== '') {
+        $eventNode['location'] = [
+            '@type' => 'Place',
+            'name' => sanitizeMetaText($matchVenue, 80),
+            'address' => [
+                '@type' => 'PostalAddress',
+                'addressLocality' => sanitizeMetaText($matchVenue, 80),
+                'addressCountry' => 'IT',
+            ],
+        ];
+    }
+    $structuredGraph[] = $eventNode;
+}
+
+if ($routeKey === 'news_article' && !empty($activeNewsArticle)) {
+    $articleNode = [
+        '@type' => 'NewsArticle',
+        '@id' => $seoMeta['canonical'] . '#article',
+        'url' => $seoMeta['canonical'],
+        'mainEntityOfPage' => ['@id' => $seoMeta['canonical']],
+        'headline' => sanitizeMetaText($activeNewsArticle['title'] ?? $seoTitle, 110),
+        'description' => $seoMeta['description'],
+        'image' => [$seoMeta['image']],
+        'inLanguage' => 'it-IT',
+        'author' => ['@id' => $siteBaseUrl . '#organization'],
+        'publisher' => ['@id' => $siteBaseUrl . '#organization'],
+    ];
+    if (!empty($seoMeta['article_published_time'])) {
+        $articleNode['datePublished'] = $seoMeta['article_published_time'];
+        $articleNode['dateModified'] = $seoMeta['article_published_time'];
+    }
+    if (!empty($seoMeta['article_tag'] ?? '')) {
+        $articleNode['articleSection'] = $seoMeta['article_tag'];
+        $articleNode['keywords'] = $seoMeta['article_tag'];
+    }
+    if (!empty($seoMeta['article_source'] ?? '')) {
+        $articleNode['sameAs'] = [$seoMeta['article_source']];
+    }
+    $structuredGraph[] = $articleNode;
+}
+
+$structuredDataJson = '';
+if (!empty($structuredGraph)) {
+    $structuredDataJson = json_encode(
+        [
+            '@context' => 'https://schema.org',
+            '@graph' => $structuredGraph,
+        ],
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT
+    ) ?: '';
+}
 ?>
 <!DOCTYPE html>
 <html lang="it">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="BianconeriHub - Hub per tifosi della Juventus con notizie, risultati e community." />
+    <meta name="description" content="<?php echo htmlspecialchars($seoMeta['description'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php if ($seoMeta['keywords'] !== ''): ?>
+    <meta name="keywords" content="<?php echo htmlspecialchars($seoMeta['keywords'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php endif; ?>
+    <meta name="robots" content="<?php echo htmlspecialchars($seoMeta['robots'], ENT_QUOTES, 'UTF-8'); ?>">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
     <meta name="application-name" content="BianconeriHub ⭐⭐⭐">
     <meta name="apple-mobile-web-app-title" content="BianconeriHub ⭐⭐⭐">
     <meta name="theme-color" content="<?php echo htmlspecialchars($themeColor, ENT_QUOTES, 'UTF-8'); ?>">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title><?php echo htmlspecialchars($pageTitle . ' | ' . $siteName, ENT_QUOTES, 'UTF-8'); ?></title>
+    <meta name="author" content="<?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>">
+    <meta name="creator" content="<?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>">
+    <link rel="canonical" href="<?php echo htmlspecialchars($seoMeta['canonical'], ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="og:title" content="<?php echo htmlspecialchars($seoFullTitle, ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="og:description" content="<?php echo htmlspecialchars($seoMeta['description'], ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="og:type" content="<?php echo htmlspecialchars($seoMeta['og_type'], ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="og:url" content="<?php echo htmlspecialchars($seoMeta['url'], ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="og:site_name" content="<?php echo htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="og:locale" content="it_IT">
+    <?php if ($seoMeta['image'] !== ''): ?>
+    <meta property="og:image" content="<?php echo htmlspecialchars($seoMeta['image'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php if ($seoMeta['image_alt'] !== ''): ?>
+    <meta property="og:image:alt" content="<?php echo htmlspecialchars($seoMeta['image_alt'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php endif; ?>
+    <?php endif; ?>
+    <?php if (!empty($seoMeta['article_published_time'] ?? '')): ?>
+    <meta property="article:published_time" content="<?php echo htmlspecialchars($seoMeta['article_published_time'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php endif; ?>
+    <?php if (!empty($seoMeta['article_tag'] ?? '')): ?>
+    <meta property="article:section" content="<?php echo htmlspecialchars($seoMeta['article_tag'], ENT_QUOTES, 'UTF-8'); ?>">
+    <meta property="article:tag" content="<?php echo htmlspecialchars($seoMeta['article_tag'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php endif; ?>
+    <meta property="og:updated_time" content="<?php echo htmlspecialchars($seoMeta['updated_time'], ENT_QUOTES, 'UTF-8'); ?>">
+    <meta name="twitter:card" content="<?php echo htmlspecialchars($seoMeta['twitter_card'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php if ($seoMeta['twitter_site'] !== ''): ?>
+    <meta name="twitter:site" content="<?php echo htmlspecialchars($seoMeta['twitter_site'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php endif; ?>
+    <?php if ($seoMeta['twitter_creator'] !== ''): ?>
+    <meta name="twitter:creator" content="<?php echo htmlspecialchars($seoMeta['twitter_creator'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php endif; ?>
+    <meta name="twitter:title" content="<?php echo htmlspecialchars($seoFullTitle, ENT_QUOTES, 'UTF-8'); ?>">
+    <meta name="twitter:description" content="<?php echo htmlspecialchars($seoMeta['description'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php if ($seoMeta['image'] !== ''): ?>
+    <meta name="twitter:image" content="<?php echo htmlspecialchars($seoMeta['image'], ENT_QUOTES, 'UTF-8'); ?>">
+    <?php endif; ?>
+    <title><?php echo htmlspecialchars($seoFullTitle, ENT_QUOTES, 'UTF-8'); ?></title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -120,6 +536,9 @@ $themeColor = '#000000';
         };
     </script>
     <link rel="stylesheet" href="assets/css/tailwind.css">
+    <?php if ($structuredDataJson !== ''): ?>
+    <script type="application/ld+json"><?php echo $structuredDataJson; ?></script>
+    <?php endif; ?>
 </head>
 <body class="bg-black text-white font-['Inter',sans-serif]" data-current-page="<?php echo htmlspecialchars($currentPage ?? 'home', ENT_QUOTES, 'UTF-8'); ?>">
 <div class="relative flex min-h-screen flex-col">

@@ -105,6 +105,17 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
 }
 
+function appIsDebug(): bool
+{
+    static $cached = null;
+
+    if ($cached === null) {
+        $cached = filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN);
+    }
+
+    return $cached;
+}
+
 function getDatabaseConfig(): array
 {
     static $config = null;
@@ -371,9 +382,11 @@ function buildEmailPlainText(string $title, array $paragraphs, ?string $ctaLabel
     $lines = [];
     $normalizedTitle = trim($title);
 
+    $lengthFunc = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
+
     if ($normalizedTitle !== '') {
         $lines[] = $normalizedTitle;
-        $lines[] = str_repeat('=', mb_strlen($normalizedTitle));
+        $lines[] = str_repeat('=', $lengthFunc($normalizedTitle));
         $lines[] = '';
     }
 
@@ -415,6 +428,47 @@ function buildEmailPlainText(string $title, array $paragraphs, ?string $ctaLabel
     return trim(implode("\n", $lines));
 }
 
+function sanitizeEmailDisplayName(?string $name): string
+{
+    if ($name === null) {
+        return '';
+    }
+
+    $clean = trim((string) $name);
+    if ($clean === '') {
+        return '';
+    }
+
+    $clean = preg_replace('/[\r\n]+/', ' ', $clean);
+    $clean = preg_replace('/[<>]/', '', (string) $clean);
+    $clean = trim((string) $clean);
+
+    if ($clean === '') {
+        return '';
+    }
+
+    if (preg_match('/^[\x20-\x7E]+$/', $clean) !== 1) {
+        $fallback = $clean;
+        if (function_exists('iconv')) {
+            $converted = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $clean);
+            if (is_string($converted) && trim($converted) !== '') {
+                $fallback = $converted;
+            }
+        }
+
+        $fallback = preg_replace('/[^\x20-\x7E]/', '', (string) $fallback);
+        $fallback = trim((string) $fallback);
+
+        if ($fallback === '') {
+            return '';
+        }
+
+        $clean = $fallback;
+    }
+
+    return $clean;
+}
+
 function sendEmailMessage(string $toEmail, string $subject, string $htmlBody, string $textBody = '', ?string $toName = null): bool
 {
     $client = getResendClient();
@@ -431,9 +485,15 @@ function sendEmailMessage(string $toEmail, string $subject, string $htmlBody, st
         return false;
     }
 
-    $fromName = getMailFromName();
-    $from = $fromName !== '' ? sprintf('%s <%s>', $fromName, $fromEmail) : $fromEmail;
-    $recipient = ($toName !== null && trim($toName) !== '') ? sprintf('%s <%s>', trim($toName), $toEmail) : $toEmail;
+    $fromName = sanitizeEmailDisplayName(getMailFromName());
+    if ($fromName === '') {
+        $fromName = 'BianconeriHub';
+    }
+
+    $from = sprintf('%s <%s>', $fromName, $fromEmail);
+
+    $recipientName = sanitizeEmailDisplayName($toName);
+    $recipient = $recipientName !== '' ? sprintf('%s <%s>', $recipientName, $toEmail) : $toEmail;
 
     $payload = [
         'from' => $from,
@@ -450,17 +510,39 @@ function sendEmailMessage(string $toEmail, string $subject, string $htmlBody, st
         $client->emails->send($payload);
         return true;
     } catch (Throwable $exception) {
-        error_log('[BianconeriHub] Unable to send email via Resend: ' . $exception->getMessage());
+        $resendErrorClass = '\\Resend\\Exceptions\\ErrorException';
+        if (class_exists($resendErrorClass) && is_a($exception, $resendErrorClass)) {
+            $message = $exception->getMessage();
+            error_log('[BianconeriHub] Resend API error: ' . $message);
+
+            $normalizedMessage = strtolower($message);
+            $needsFallback = str_contains($normalizedMessage, 'domain') && (str_contains($normalizedMessage, 'verify') || str_contains($normalizedMessage, 'not verified'));
+
+            if ($needsFallback) {
+                $fallbackFrom = sprintf('%s <%s>', $fromName, 'onboarding@resend.dev');
+                $payload['from'] = $fallbackFrom;
+
+                try {
+                    $client->emails->send($payload);
+                    error_log('[BianconeriHub] Resend fallback sender onboarding@resend.dev used after domain verification error.');
+                    return true;
+                } catch (Throwable $fallbackException) {
+                    error_log('[BianconeriHub] Resend fallback send failed: ' . $fallbackException->getMessage());
+                }
+            }
+        } else {
+            error_log('[BianconeriHub] Unable to send email via Resend: ' . $exception->getMessage());
+        }
     }
 
     return false;
 }
 
-function sendWelcomeEmail(array $user): void
+function sendWelcomeEmail(array $user): bool
 {
     $email = trim((string) ($user['email'] ?? ''));
     if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        return;
+        return false;
     }
 
     $displayName = buildUserDisplayName($user['first_name'] ?? null, $user['last_name'] ?? null, (string) ($user['username'] ?? ''));
@@ -492,14 +574,14 @@ function sendWelcomeEmail(array $user): void
 
     $text = buildEmailPlainText($subject, $paragraphs, 'Entra nella community', $ctaUrl, $footerLines);
 
-    sendEmailMessage($email, $subject, $html, $text, $displayName);
+    return sendEmailMessage($email, $subject, $html, $text, $displayName);
 }
 
-function notifyAdminNewRegistration(array $user): void
+function notifyAdminNewRegistration(array $user): bool
 {
     $adminEmail = 'ag.servizi16@gmail.com';
     if (!filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
-        return;
+        return false;
     }
 
     $username = trim((string) ($user['username'] ?? ''));
@@ -537,7 +619,7 @@ function notifyAdminNewRegistration(array $user): void
 
     $text = buildEmailPlainText('Nuovo utente iscritto', $paragraphs, null, null, $footerLines);
 
-    sendEmailMessage($adminEmail, $subject, $html, $text, 'AG Servizi');
+    return sendEmailMessage($adminEmail, $subject, $html, $text, 'AG Servizi');
 }
 
 function sendPasswordResetEmail(array $user, string $token, DateTimeInterface $expiresAt): bool
@@ -1759,6 +1841,167 @@ function resolvePageTitle(string $pageKey, array $pageTitles, string $fallback):
 }
 
 /**
+ * Prepare safe text for usage inside SEO meta tags.
+ */
+function sanitizeMetaText($text, int $maxLength = 0): string
+{
+    $normalized = trim(strip_tags((string) $text));
+    if ($normalized === '') {
+        return '';
+    }
+
+    $normalized = preg_replace('/\s+/u', ' ', $normalized);
+
+    if ($maxLength > 0 && mb_strlen($normalized) > $maxLength) {
+        $normalized = rtrim(mb_substr($normalized, 0, $maxLength - 1));
+        if ($normalized !== '') {
+            $normalized .= '…';
+        }
+    }
+
+    return $normalized;
+}
+
+/**
+ * Ensure URLs used in meta tags are absolute.
+ */
+function normalizeToAbsoluteUrl(?string $value): string
+{
+    $url = trim((string) $value);
+
+    if ($url === '') {
+        return '';
+    }
+
+    if (preg_match('/^https?:\/\//i', $url)) {
+        return $url;
+    }
+
+    if (strpos($url, '//') === 0) {
+        return 'https:' . $url;
+    }
+
+    return appUrl($url);
+}
+
+/**
+ * Resolve the canonical URL for a given route.
+ */
+function buildCanonicalUrl(string $pageKey, array $context = []): string
+{
+    $base = rtrim(getApplicationBaseUrl(), '/');
+
+    switch ($pageKey) {
+        case '':
+        case 'home':
+            return $base . '/';
+        case 'news':
+            return appUrl('?page=news');
+        case 'partite':
+            return appUrl('?page=partite');
+        case 'community':
+            return appUrl('?page=community');
+        case 'profile':
+            return appUrl('?page=profile');
+        case 'profile_settings':
+            return appUrl('?page=profile_settings');
+        case 'profile_search':
+            $query = trim((string) ($context['query'] ?? ''));
+            if ($query !== '') {
+                return appUrl('?page=profile_search&q=' . rawurlencode($query));
+            }
+            return appUrl('?page=profile_search');
+        case 'news_article':
+            $slug = trim((string) ($context['slug'] ?? ''));
+            if ($slug !== '') {
+                return appUrl('?page=news_article&slug=' . rawurlencode($slug));
+            }
+            $newsId = isset($context['id']) ? (int) $context['id'] : 0;
+            if ($newsId > 0) {
+                return appUrl('?page=news_article&id=' . $newsId);
+            }
+            return appUrl('?page=news');
+        case 'user_profile':
+            $username = trim((string) ($context['username'] ?? ''));
+            if ($username !== '') {
+                return appUrl('?page=user_profile&username=' . rawurlencode($username));
+            }
+            $userId = isset($context['id']) ? (int) $context['id'] : 0;
+            if ($userId > 0) {
+                return appUrl('?page=user_profile&id=' . $userId);
+            }
+            return appUrl('?page=community');
+        case 'login':
+            return appUrl('?page=login');
+        case 'register':
+            return appUrl('?page=register');
+        case 'password_forgot':
+            return appUrl('?page=password_forgot');
+        case 'password_reset':
+            $token = trim((string) ($context['token'] ?? ''));
+            if ($token !== '') {
+                return appUrl('?page=password_reset&token=' . rawurlencode($token));
+            }
+            return appUrl('?page=password_reset');
+        default:
+            return appUrl('?page=' . rawurlencode($pageKey));
+    }
+}
+
+/**
+ * Locate the default Open Graph image for social previews.
+ */
+function getDefaultOgImageUrl(): string
+{
+    $configured = trim((string) env('SEO_DEFAULT_IMAGE', ''));
+    if ($configured !== '') {
+        return normalizeToAbsoluteUrl($configured);
+    }
+
+    $candidates = [
+        'uploads/og-default.jpg',
+        'uploads/og-default.png',
+        'assets/img/og-default.jpg',
+        'assets/img/og-default.png',
+        'uploads/favicon.png',
+    ];
+
+    foreach ($candidates as $candidate) {
+        $absolute = __DIR__ . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, ltrim($candidate, '/'));
+        if (is_file($absolute)) {
+            return normalizeToAbsoluteUrl($candidate);
+        }
+    }
+
+    return normalizeToAbsoluteUrl('uploads/favicon.png');
+}
+
+/**
+ * Convert arbitrary date inputs to ISO 8601 format.
+ */
+function formatToIso8601($value): ?string
+{
+    if ($value instanceof DateTimeInterface) {
+        return $value->format(DateTimeInterface::ATOM);
+    }
+
+    if (is_string($value) && $value !== '') {
+        try {
+            $date = new DateTime($value);
+            return $date->format(DateTimeInterface::ATOM);
+        } catch (Throwable $exception) {
+            return null;
+        }
+    }
+
+    if (is_numeric($value)) {
+        return gmdate('c', (int) $value);
+    }
+
+    return null;
+}
+
+/**
  * Navigation entries shared across navbar variants.
  */
 function getNavigationItems(): array
@@ -2062,6 +2305,66 @@ function userProfilesTableAvailable(?PDO $connection = null): bool
     return $cache;
 }
 
+function communityFollowersTableAvailable(?PDO $connection = null): bool
+{
+    static $cache;
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        $cache = false;
+        return $cache;
+    }
+
+    try {
+        $pdo->query('SELECT 1 FROM community_followers LIMIT 1');
+        $cache = true;
+    } catch (PDOException $exception) {
+        $sqlState = $exception->getCode();
+        if ($sqlState === '42S02' || stripos($exception->getMessage(), 'community_followers') !== false) {
+            $cache = false;
+        } else {
+            error_log('[BianconeriHub] Failed checking community_followers availability: ' . $exception->getMessage());
+            $cache = false;
+        }
+    }
+
+    return $cache;
+}
+
+function communityPostsTableAvailable(?PDO $connection = null): bool
+{
+    static $cache;
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $pdo = $connection ?? getDatabaseConnection();
+    if (!$pdo) {
+        $cache = false;
+        return $cache;
+    }
+
+    try {
+        $pdo->query('SELECT id FROM community_posts LIMIT 1');
+        $cache = true;
+    } catch (PDOException $exception) {
+        $sqlState = $exception->getCode();
+        if ($sqlState === '42S02' || stripos($exception->getMessage(), 'community_posts') !== false) {
+            $cache = false;
+        } else {
+            error_log('[BianconeriHub] Failed checking community_posts availability: ' . $exception->getMessage());
+            $cache = false;
+        }
+    }
+
+    return $cache;
+}
+
 function ensureUserConsentsTable(PDO $pdo): void
 {
     static $checked = false;
@@ -2279,6 +2582,8 @@ function saveUserProfileSettings(int $userId, array $input): array
     }
 
     try {
+        ensureUserConsentsTable($pdo);
+
         $pdo->beginTransaction();
 
         $userUpdate = $pdo->prepare('UPDATE users SET first_name = :first_name, last_name = :last_name WHERE id = :user_id');
@@ -3124,11 +3429,87 @@ function searchCommunityUsers(string $query, int $limit = 12, int $offset = 0): 
     $currentUser = getLoggedInUser();
     $currentUserId = isset($currentUser['id']) ? (int) $currentUser['id'] : 0;
 
-    $likeTerm = '%' . $term . '%';
+    $escapedTerm = addcslashes($term, "%_");
+    $likeTerm = '%' . $escapedTerm . '%';
+
+    $profilesAvailable = userProfilesTableAvailable($pdo);
+    $followersAvailable = communityFollowersTableAvailable($pdo);
+    $postsAvailable = communityPostsTableAvailable($pdo);
+
+    $buildNameCondition = static function (callable $placeholderFactory): string {
+        $first = $placeholderFactory();
+        $last = $placeholderFactory();
+        $full = $placeholderFactory();
+
+        return sprintf(
+            '(u.first_name LIKE %s OR u.last_name LIKE %s OR CONCAT_WS(\' \', u.first_name, u.last_name) LIKE %s)',
+            $first,
+            $last,
+            $full
+        );
+    };
+
+    $buildProfileCondition = static function (callable $placeholderFactory): string {
+        $bio = $placeholderFactory();
+        $location = $placeholderFactory();
+        $favoritePlayer = $placeholderFactory();
+        $favoriteMemory = $placeholderFactory();
+        $website = $placeholderFactory();
+
+        return sprintf(
+            '(p.bio LIKE %s OR p.location LIKE %s OR p.favorite_player LIKE %s OR p.favorite_memory LIKE %s OR p.website LIKE %s)',
+            $bio,
+            $location,
+            $favoritePlayer,
+            $favoriteMemory,
+            $website
+        );
+    };
+
+    $buildPostsCondition = static function (callable $placeholderFactory): string {
+        $content = $placeholderFactory();
+
+        return sprintf(
+            'EXISTS (SELECT 1 FROM community_posts cp WHERE cp.user_id = u.id AND cp.content LIKE %s)',
+            $content
+        );
+    };
+
+    $countParams = [];
+    $countParamIndex = 0;
+    $createCountPlaceholder = static function () use (&$countParams, &$countParamIndex, $likeTerm): string {
+        $placeholder = ':term_c' . $countParamIndex;
+        $countParams[$placeholder] = $likeTerm;
+        $countParamIndex++;
+        return $placeholder;
+    };
+
+    $countWhereParts = [
+        'u.username LIKE ' . $createCountPlaceholder(),
+        $buildNameCondition($createCountPlaceholder),
+    ];
+
+    if ($profilesAvailable) {
+        $countWhereParts[] = $buildProfileCondition($createCountPlaceholder);
+    }
+    if ($postsAvailable) {
+        $countWhereParts[] = $buildPostsCondition($createCountPlaceholder);
+    }
+
+    $countWhereSql = "(\n    " . implode("\n    OR ", $countWhereParts) . "\n)";
+
+    $countSql = 'SELECT COUNT(DISTINCT u.id) FROM users u';
+    if ($profilesAvailable) {
+        $countSql .= "\nLEFT JOIN user_profiles p ON p.user_id = u.id";
+    }
+    $countSql .= "\nWHERE " . $countWhereSql;
 
     try {
-        $countStatement = $pdo->prepare('SELECT COUNT(*) FROM users WHERE username LIKE :term');
-        $countStatement->execute(['term' => $likeTerm]);
+        $countStatement = $pdo->prepare($countSql);
+        foreach ($countParams as $placeholder => $value) {
+            $countStatement->bindValue($placeholder, $value, PDO::PARAM_STR);
+        }
+        $countStatement->execute();
         $total = (int) ($countStatement->fetchColumn() ?: 0);
         $response['total'] = $total;
 
@@ -3136,19 +3517,76 @@ function searchCommunityUsers(string $query, int $limit = 12, int $offset = 0): 
             return $response;
         }
 
-    $sql = <<<SQL
-SELECT u.id, u.username, u.first_name, u.last_name, u.badge, u.avatar_url, u.created_at,
-       CASE WHEN f.follower_id IS NULL THEN 0 ELSE 1 END AS is_following
-FROM users u
-LEFT JOIN community_followers f ON f.user_id = u.id AND f.follower_id = :viewer
-WHERE u.username LIKE :term
-ORDER BY u.username ASC
-LIMIT $limit OFFSET $offset
-SQL;
+        $selectParams = [];
+        $selectParamIndex = 0;
+        $createSelectPlaceholder = static function () use (&$selectParams, &$selectParamIndex, $likeTerm): string {
+            $placeholder = ':term_s' . $selectParamIndex;
+            $selectParams[$placeholder] = $likeTerm;
+            $selectParamIndex++;
+            return $placeholder;
+        };
 
-        $statement = $pdo->prepare($sql);
-        $statement->bindValue(':viewer', $currentUserId, PDO::PARAM_INT);
-        $statement->bindValue(':term', $likeTerm, PDO::PARAM_STR);
+        $selectWhereParts = [
+            'u.username LIKE ' . $createSelectPlaceholder(),
+            $buildNameCondition($createSelectPlaceholder),
+        ];
+
+        $selectProfileWhere = null;
+        if ($profilesAvailable) {
+            $selectProfileWhere = $buildProfileCondition($createSelectPlaceholder);
+            $selectWhereParts[] = $selectProfileWhere;
+        }
+
+        $selectPostsWhere = null;
+        if ($postsAvailable) {
+            $selectPostsWhere = $buildPostsCondition($createSelectPlaceholder);
+            $selectWhereParts[] = $selectPostsWhere;
+        }
+
+        $whereSql = "(\n    " . implode("\n    OR ", $selectWhereParts) . "\n)";
+
+        $usernameMatchCondition = 'u.username LIKE ' . $createSelectPlaceholder();
+        $nameMatchCondition = $buildNameCondition($createSelectPlaceholder);
+        $profileMatchCondition = $profilesAvailable ? $buildProfileCondition($createSelectPlaceholder) : null;
+        $postsMatchCondition = $postsAvailable ? $buildPostsCondition($createSelectPlaceholder) : null;
+
+        $selectFields = [
+            'u.id',
+            'u.username',
+            'u.first_name',
+            'u.last_name',
+            'u.badge',
+            'u.avatar_url',
+            'u.created_at',
+            $followersAvailable
+                ? 'CASE WHEN f.follower_id IS NULL THEN 0 ELSE 1 END AS is_following'
+                : '0 AS is_following',
+            'CASE WHEN ' . $usernameMatchCondition . ' THEN 1 ELSE 0 END AS username_match',
+            'CASE WHEN ' . $nameMatchCondition . ' THEN 1 ELSE 0 END AS name_match',
+            $profilesAvailable
+                ? 'CASE WHEN ' . $profileMatchCondition . ' THEN 1 ELSE 0 END AS profile_match'
+                : '0 AS profile_match',
+            $postsAvailable
+                ? 'CASE WHEN ' . $postsMatchCondition . ' THEN 1 ELSE 0 END AS posts_match'
+                : '0 AS posts_match',
+        ];
+
+        $selectSql = 'SELECT ' . implode(",\n    ", $selectFields) . "\nFROM users u";
+        if ($profilesAvailable) {
+            $selectSql .= "\nLEFT JOIN user_profiles p ON p.user_id = u.id";
+        }
+        if ($followersAvailable) {
+            $selectSql .= "\nLEFT JOIN community_followers f ON f.user_id = u.id AND f.follower_id = :viewer";
+        }
+        $selectSql .= "\nWHERE " . $whereSql . "\nORDER BY username_match DESC, name_match DESC, profile_match DESC, posts_match DESC, u.username ASC\nLIMIT $limit OFFSET $offset";
+
+        $statement = $pdo->prepare($selectSql);
+        foreach ($selectParams as $placeholder => $value) {
+            $statement->bindValue($placeholder, $value, PDO::PARAM_STR);
+        }
+        if ($followersAvailable) {
+            $statement->bindValue(':viewer', $currentUserId, PDO::PARAM_INT);
+        }
         $statement->execute();
 
         $results = [];
@@ -3159,9 +3597,22 @@ SQL;
             }
 
             $createdAt = normalizeToTimestamp($row['created_at'] ?? time());
-
             $firstName = isset($row['first_name']) ? (string) $row['first_name'] : null;
             $lastName = isset($row['last_name']) ? (string) $row['last_name'] : null;
+
+            $matchSources = [];
+            if (!empty($row['username_match'])) {
+                $matchSources[] = 'username';
+            }
+            if (!empty($row['name_match'])) {
+                $matchSources[] = 'nome o cognome';
+            }
+            if (!empty($row['profile_match'])) {
+                $matchSources[] = 'profilo';
+            }
+            if (!empty($row['posts_match'])) {
+                $matchSources[] = 'post community';
+            }
 
             $results[] = [
                 'id' => $userId,
@@ -3173,6 +3624,7 @@ SQL;
                 'is_following' => ((int) ($row['is_following'] ?? 0)) === 1,
                 'viewer_can_follow' => $currentUserId > 0 && $currentUserId !== $userId,
                 'is_current_user' => $currentUserId > 0 && $currentUserId === $userId,
+                'match_sources' => $matchSources,
             ];
         }
 
@@ -3181,64 +3633,11 @@ SQL;
 
         return $response;
     } catch (PDOException $exception) {
-        $sqlState = $exception->getCode();
-        $message = $exception->getMessage();
-        $missingFollowersTable = $sqlState === '42S02' || stripos($message, 'community_followers') !== false;
-
-        if ($missingFollowersTable) {
-            error_log('[BianconeriHub] Followers table not available, using fallback search: ' . $message);
-
-            try {
-                $fallbackSql = <<<SQL
-SELECT u.id, u.username, u.first_name, u.last_name, u.badge, u.avatar_url, u.created_at
-FROM users u
-WHERE u.username LIKE :term
-ORDER BY u.username ASC
-LIMIT $limit OFFSET $offset
-SQL;
-
-                $fallback = $pdo->prepare($fallbackSql);
-                $fallback->bindValue(':term', $likeTerm, PDO::PARAM_STR);
-                $fallback->execute();
-
-                $results = [];
-                foreach ($fallback as $row) {
-                    $userId = (int) ($row['id'] ?? 0);
-                    if ($userId <= 0) {
-                        continue;
-                    }
-
-                    $createdAt = normalizeToTimestamp($row['created_at'] ?? time());
-
-                    $firstName = isset($row['first_name']) ? (string) $row['first_name'] : null;
-                    $lastName = isset($row['last_name']) ? (string) $row['last_name'] : null;
-
-                    $results[] = [
-                        'id' => $userId,
-                        'username' => $row['username'] ?? '',
-                        'display_name' => buildUserDisplayName($firstName, $lastName, (string) ($row['username'] ?? '')),
-                        'badge' => $row['badge'] ?? 'Tifoso',
-                        'avatar_url' => $row['avatar_url'] ?? null,
-                        'created_at' => $createdAt,
-                        'is_following' => false,
-                        'viewer_can_follow' => $currentUserId > 0 && $currentUserId !== $userId,
-                        'is_current_user' => $currentUserId > 0 && $currentUserId === $userId,
-                    ];
-                }
-
-                $response['results'] = $results;
-                $response['has_more'] = ($offset + count($results)) < $total;
-
-                return $response;
-            } catch (PDOException $fallbackException) {
-                error_log('[BianconeriHub] Failed to search community users (fallback): ' . $fallbackException->getMessage());
-            }
-        } else {
-            error_log('[BianconeriHub] Failed to search community users: ' . $message);
-        }
+        error_log('[BianconeriHub] Failed to search community users: ' . $exception->getMessage());
     }
 
     return $response;
+
 }
 
 function getUserProfileSummary(int $userId): array
@@ -3499,17 +3898,20 @@ function registerUser(array $payload): array
     $firstName = trim((string) ($payload['first_name'] ?? ''));
     $lastName = trim((string) ($payload['last_name'] ?? ''));
 
+    $lengthFunc = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
+    $substrFunc = function_exists('mb_substr') ? 'mb_substr' : 'substr';
+
     if ($firstName !== '') {
         $firstName = preg_replace('/\s+/', ' ', $firstName);
-        if (mb_strlen($firstName) > 80) {
-            $firstName = mb_substr($firstName, 0, 80);
+        if ($lengthFunc($firstName) > 80) {
+            $firstName = $substrFunc($firstName, 0, 80);
         }
     }
 
     if ($lastName !== '') {
         $lastName = preg_replace('/\s+/', ' ', $lastName);
-        if (mb_strlen($lastName) > 80) {
-            $lastName = mb_substr($lastName, 0, 80);
+        if ($lengthFunc($lastName) > 80) {
+            $lastName = $substrFunc($lastName, 0, 80);
         }
     }
 
@@ -3566,7 +3968,9 @@ function registerUser(array $payload): array
 
         $userId = (int) $pdo->lastInsertId();
         recordDefaultUserConsents($pdo, $userId);
-        $pdo->commit();
+        if ($pdo->inTransaction()) {
+            $pdo->commit();
+        }
 
         $userData = [
             'id' => $userId,
@@ -3578,12 +3982,26 @@ function registerUser(array $payload): array
             'display_name' => buildUserDisplayName($firstName !== '' ? $firstName : null, $lastName !== '' ? $lastName : null, $username),
         ];
 
-        sendWelcomeEmail($userData);
-        notifyAdminNewRegistration($userData);
+        $welcomeEmailSent = false;
+        $adminNotified = false;
+
+        try {
+            $welcomeEmailSent = sendWelcomeEmail($userData);
+        } catch (Throwable $exception) {
+            error_log('[BianconeriHub] Welcome email dispatch threw an exception: ' . $exception->getMessage());
+        }
+
+        try {
+            $adminNotified = notifyAdminNewRegistration($userData);
+        } catch (Throwable $exception) {
+            error_log('[BianconeriHub] Admin notification dispatch threw an exception: ' . $exception->getMessage());
+        }
 
         return [
             'success' => true,
             'user' => $userData,
+            'welcome_email_sent' => $welcomeEmailSent,
+            'admin_notified' => $adminNotified,
         ];
     } catch (PDOException $exception) {
         if ($pdo->inTransaction()) {
@@ -3592,7 +4010,33 @@ function registerUser(array $payload): array
 
         error_log('[BianconeriHub] Failed to register user: ' . $exception->getMessage());
 
-        return ['success' => false, 'message' => 'Registrazione non riuscita. Riprova.'];
+        $logPayload = [
+            'timestamp' => date('c'),
+            'message' => $exception->getMessage(),
+            'code' => $exception->getCode(),
+            'trace' => $exception->getTraceAsString(),
+            'payload' => [
+                'username' => $username,
+                'email' => $email,
+            ],
+        ];
+
+        $logFile = __DIR__ . '/storage/cache/last_register_error.json';
+        if (!is_dir(dirname($logFile))) {
+            @mkdir(dirname($logFile), 0775, true);
+        }
+        @file_put_contents($logFile, json_encode($logPayload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+
+        $response = ['success' => false, 'message' => 'Registrazione non riuscita. Riprova.'];
+
+        if (appIsDebug()) {
+            $response['debug_message'] = $exception->getMessage();
+            if ((int) $exception->getCode() !== 0) {
+                $response['debug_code'] = (int) $exception->getCode();
+            }
+        }
+
+        return $response;
     }
 }
 
@@ -3888,6 +4332,32 @@ function getWebPushClient()
     $privateKey = trim((string) env('VAPID_PRIVATE_KEY', ''));
     $subject = trim((string) env('PUSH_SUBJECT', ''));
 
+    $defaultOptions = [];
+
+    $batchSize = (int) env('WEB_PUSH_BATCH_SIZE', 0);
+    if ($batchSize > 0) {
+        $defaultOptions['batchSize'] = $batchSize;
+    }
+
+    $timeout = (int) env('WEB_PUSH_TIMEOUT', 30);
+    if ($timeout <= 0) {
+        $timeout = 30;
+    }
+
+    $clientOptions = [];
+    $verify = env('WEB_PUSH_VERIFY', null);
+    if ($verify !== null) {
+        $normalized = strtolower(trim((string) $verify));
+        if ($normalized === '0' || $normalized === 'false') {
+            $clientOptions['verify'] = false;
+        }
+    }
+
+    $caBundle = trim((string) env('WEB_PUSH_CA_BUNDLE', ''));
+    if ($caBundle !== '') {
+        $clientOptions['verify'] = $caBundle;
+    }
+
     try {
         $client = new $webPushClass([
             'VAPID' => [
@@ -3895,7 +4365,7 @@ function getWebPushClient()
                 'publicKey' => $publicKey,
                 'privateKey' => $privateKey,
             ],
-        ]);
+        ], $defaultOptions, $timeout, $clientOptions);
     } catch (\Throwable $exception) {
         error_log('[BianconeriHub] Unable to initialise WebPush client: ' . $exception->getMessage());
         $client = null;

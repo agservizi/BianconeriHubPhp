@@ -2,6 +2,10 @@
 Options -Indexes
 RewriteEngine On
 
+# Serve dynamic robots and sitemap endpoints
+RewriteRule ^robots\.txt$ scripts/serve_robots.php [L]
+RewriteRule ^sitemap\.xml$ scripts/serve_sitemap.php [L]
+
 # Redirect all non-file requests to index.php for query-based routing
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d

@@ -85,6 +85,15 @@ ob_start();
                     } elseif ($userId > 0) {
                         $profileUrl = '?page=user_profile&id=' . $userId;
                     }
+                    $matchSources = [];
+                    if (!empty($user['match_sources']) && is_array($user['match_sources'])) {
+                        foreach ($user['match_sources'] as $sourceLabel) {
+                            $label = trim((string) $sourceLabel);
+                            if ($label !== '') {
+                                $matchSources[] = $label;
+                            }
+                        }
+                    }
                 ?>
                     <li class="rounded-3xl border border-white/10 bg-black/35 px-4 py-4">
                         <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -114,6 +123,9 @@ ob_start();
                                         <?php endif; ?>
                                         <p class="text-sm text-gray-300">Badge: <span class="font-semibold text-white"><?php echo htmlspecialchars($badge, ENT_QUOTES, 'UTF-8'); ?></span></p>
                                         <p class="text-xs uppercase tracking-wide text-gray-500">Iscritto <?php echo htmlspecialchars($joinedLabel, ENT_QUOTES, 'UTF-8'); ?></p>
+                                        <?php if (!empty($matchSources)): ?>
+                                            <p class="text-xs text-gray-400">Corrispondenza trovata in: <span class="text-gray-200"><?php echo htmlspecialchars(implode(', ', $matchSources), ENT_QUOTES, 'UTF-8'); ?></span></p>
+                                        <?php endif; ?>
                                     </div>
                             <?php if ($profileUrl !== ''): ?>
                                 </a>
