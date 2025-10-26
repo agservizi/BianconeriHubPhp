@@ -1,230 +1,216 @@
+```
+**********************************************************************
+*                                                                    *
+*  BIANCONERIHUB PHP — LA CURVA DIGITALE DEI TIFOSI BIANCONERI ⭐⭐⭐  *
+*                                                                    *
+**********************************************************************
+```
+
 # BianconeriHub PHP
 
-Portale community dedicato ai tifosi juventini con news reali, calendario partite e funzionalità social (commenti, like) basate su PHP 8 + MySQL.
+> **La curva digitale dei tifosi bianconeri.** Web app full-stack in PHP 8 che unisce news verificate, community interattiva, partite e funzionalità PWA.
 
-## Requisiti
+---
 
-- PHP 8.1 o superiore con estensioni `pdo_mysql`, `curl`, `mbstring`, `openssl` abilitate
-- Server MySQL/MariaDB 10.6+
-- Composer consigliato (richiesto per abilitare le notifiche push tramite Web Push)
+## Indice
 
-## Configurazione rapida
+- [BianconeriHub PHP](#bianconerihub-php)
+  - [Indice](#indice)
+  - [Panoramica](#panoramica)
+  - [Stack e dipendenze](#stack-e-dipendenze)
+  - [Setup rapido](#setup-rapido)
+  - [Configurazione ambiente](#configurazione-ambiente)
+  - [Database e migrazioni](#database-e-migrazioni)
+  - [Script CLI utili](#script-cli-utili)
+  - [Funzionalità principali](#funzionalità-principali)
+  - [PWA e notifiche push](#pwa-e-notifiche-push)
+    - [Inviare notifiche](#inviare-notifiche)
+  - [Flussi automatizzati](#flussi-automatizzati)
+  - [Checklist di test manuali](#checklist-di-test-manuali)
+  - [Struttura del progetto](#struttura-del-progetto)
+  - [Licenza](#licenza)
 
-1. Copia `.env.example` (o crea manualmente) in `.env` e imposta i parametri:
-   ```env
-   APP_NAME="BianconeriHub"
-   APP_TAGLINE="Il cuore pulsante dei tifosi juventini"
-   APP_TIMEZONE="Europe/Rome"
-   BASE_URL="https://example.com"   # usato per generare link di condivisione
-   APP_DEBUG=true
+---
 
-   DB_DRIVER=mysql
-   DB_HOST=127.0.0.1
-   DB_PORT=3306
-   DB_NAME=bianconerihub
-   DB_USER=root
-   DB_PASSWORD=secret
-   DB_CHARSET=utf8mb4
+## Panoramica
 
-   NEWS_FEED_URL=https://www.tuttojuve.com/rss
-   SESSION_NAME=bianconerihub_session
-   ```
+BianconeriHub è una fan app che replica lo stile visivo nero-argento con dettagli dorati tipici della curva juventina.
 
-   Per le email transazionali, aggiungi le variabili dedicate a [Resend](https://resend.com/):
-   ```env
-   RESEND_API_KEY="re_xxx"
-   MAIL_FROM_ADDRESS="notifiche@bianconerihub.com"
-   MAIL_FROM_NAME="BianconeriHub"
-   ```
+- **Community viva**: post, like, commenti annidati, reazioni e sondaggi.
+- **News sempre fresche**: integrazione RSS con caching intelligente e deduplicazione URL.
+- **Match center**: calendario, schede gara, esportazione ICS.
+- **PWA mobile-first**: installabile, offline-ready, push notifications.
+- **Governance**: consensi privacy automatici, compressione immagini, mail di benvenuto e avviso admin.
 
-2. Importa/aggiorna lo schema database:
-   ```bash
-   mysql -u your_user -p your_database < database/schema.sql
-   ```
-   > **Aggiornamento da versioni precedenti**: se il database era già in uso, applica manualmente i seguenti cambi:
-   > ```sql
-   > ALTER TABLE news ADD COLUMN source_url VARCHAR(255) NULL AFTER image_path;
-   > ALTER TABLE news ADD UNIQUE KEY news_source_url_unique (source_url);
-   > 
-   > CREATE TABLE news_comments (
-   >   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-   >   news_id INT UNSIGNED NOT NULL,
-   >   user_id INT UNSIGNED NOT NULL,
-   >   content TEXT NOT NULL,
-   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   >   updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-   >   KEY news_comments_news_id_foreign (news_id),
-   >   KEY news_comments_user_id_foreign (user_id),
-   >   CONSTRAINT news_comments_news_id_foreign FOREIGN KEY (news_id) REFERENCES news (id) ON DELETE CASCADE ON UPDATE CASCADE,
-   >   CONSTRAINT news_comments_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
-   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-   > 
-   > CREATE TABLE news_likes (
-   >   news_id INT UNSIGNED NOT NULL,
-   >   user_id INT UNSIGNED NOT NULL,
-   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   >   PRIMARY KEY (news_id, user_id),
-   >   KEY news_likes_user_id_foreign (user_id),
-   >   CONSTRAINT news_likes_news_id_foreign FOREIGN KEY (news_id) REFERENCES news (id) ON DELETE CASCADE ON UPDATE CASCADE,
-   >   CONSTRAINT news_likes_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
-   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-   >
-   > -- Notifiche push (ottobre 2025)
-   > CREATE TABLE community_followers (
-   >   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-   >   user_id INT UNSIGNED NOT NULL,
-   >   follower_id INT UNSIGNED NOT NULL,
-   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   >   UNIQUE KEY community_followers_unique (user_id, follower_id),
-   >   KEY community_followers_follower_id_foreign (follower_id),
-   >   CONSTRAINT community_followers_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE,
-   >   CONSTRAINT community_followers_follower_id_foreign FOREIGN KEY (follower_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
-   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+## Stack e dipendenze
 
-   > -- Recupero password (ottobre 2025)
-   > CREATE TABLE IF NOT EXISTS password_resets (
-   >   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-   >   user_id INT UNSIGNED NOT NULL,
-   >   token_hash CHAR(64) NOT NULL,
-   >   expires_at DATETIME NOT NULL,
-   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   >   UNIQUE KEY password_resets_token_hash_unique (token_hash),
-   >   KEY password_resets_user_id_foreign (user_id),
-   >   KEY password_resets_expires_at_index (expires_at),
-   >   CONSTRAINT password_resets_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
-   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+- Linguaggio: **PHP 8.1+**
+- Database: **MySQL/MariaDB 10.6+**
+- Librerie principali:
+   - `guzzlehttp/guzzle` per feed esterni
+   - `minishlink/web-push` (opzionale) per notifiche push
+   - `resend/resend-php` per l'invio email transazionale
+- Service Worker e PWA via `service-worker.js`
+- Front-end: Tailwind utility-first, JavaScript vanilla con progressive enhancement.
 
-   > -- Community commenti: risposte e like (ottobre 2025)
-   > ALTER TABLE community_post_comments ADD COLUMN IF NOT EXISTS parent_comment_id INT UNSIGNED NULL AFTER user_id;
-   > -- Se il vincolo esiste già, salta la riga seguente
-   > ALTER TABLE community_post_comments ADD CONSTRAINT community_post_comments_parent_comment_id_foreign FOREIGN KEY (parent_comment_id) REFERENCES community_post_comments(id) ON DELETE CASCADE ON UPDATE CASCADE;
-   > 
-   > CREATE TABLE IF NOT EXISTS community_comment_reactions (
-   >   comment_id INT UNSIGNED NOT NULL,
-   >   user_id INT UNSIGNED NOT NULL,
-   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   >   PRIMARY KEY (comment_id, user_id),
-   >   KEY community_comment_reactions_user_id_index (user_id),
-   >   CONSTRAINT community_comment_reactions_comment_id_foreign FOREIGN KEY (comment_id) REFERENCES community_post_comments(id) ON DELETE CASCADE ON UPDATE CASCADE,
-   >   CONSTRAINT community_comment_reactions_user_id_foreign FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
-   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-   > 
-   > -- Community sondaggi: votazioni (ottobre 2025)
-   > CREATE TABLE IF NOT EXISTS community_poll_votes (
-   >   post_id INT UNSIGNED NOT NULL,
-   >   user_id INT UNSIGNED NOT NULL,
-   >   option_index TINYINT UNSIGNED NOT NULL,
-   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   >   updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-   >   PRIMARY KEY (post_id, user_id),
-   >   KEY community_poll_votes_user_id_foreign (user_id),
-   >   CONSTRAINT community_poll_votes_post_id_foreign FOREIGN KEY (post_id) REFERENCES community_posts(id) ON DELETE CASCADE ON UPDATE CASCADE,
-   >   CONSTRAINT community_poll_votes_user_id_foreign FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
-   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-   > 
-   > -- In alternativa puoi lanciare gli script idempotenti:
-   > php scripts/migrate_comment_features.php
-   > php scripts/migrate_poll_votes.php
-   >
-   > CREATE TABLE user_push_subscriptions (
-   >   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-   >   user_id INT UNSIGNED NOT NULL,
-   >   endpoint VARCHAR(500) NOT NULL,
-   >   public_key VARCHAR(255) NOT NULL,
-   >   auth_token VARCHAR(255) NOT NULL,
-   >   content_encoding VARCHAR(40) DEFAULT 'aes128gcm',
-   >   device_name VARCHAR(120) DEFAULT NULL,
-   >   user_agent VARCHAR(255) DEFAULT NULL,
-   >   scope ENUM('global','following') NOT NULL DEFAULT 'global',
-   >   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   >   updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-   >   UNIQUE KEY user_push_subscriptions_endpoint_unique (endpoint(191)),
-   >   KEY user_push_subscriptions_user_id_foreign (user_id),
-   >   CONSTRAINT user_push_subscriptions_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
-   > ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-   > ```
+## Setup rapido
 
-3. Avvia il server PHP integrato (opzionale):
-   ```bash
-   php -S 127.0.0.1:8000 -t .
-   ```
+```bash
+# 1. Clona la repo
+git clone https://github.com/agservizi/BianconeriHubPhp.git
+cd BianconeriHubPhp
 
-## Sincronizzazione feed TuttoJuve
+# 2. Installa dipendenze opzionali (push/email)
+composer install
 
-- Il feed viene sincronizzato automaticamente al caricamento delle pagine news e memorizzato tramite `updated_at` delle notizie. Il fetch avviene al massimo una volta ogni 15 minuti.
-- Puoi forzare la sincronizzazione manualmente da CLI:
-  ```bash
-  php scripts/sync_news.php
-  ```
-- Per mantenere il feed aggiornato in produzione, schedula il comando ogni 10-15 minuti (es. cron):
-  ```cron
-  */15 * * * * /usr/bin/php /path/to/BianconeriHubPhp/scripts/sync_news.php >> /var/log/bianconerihub_sync.log 2>&1
-  ```
+# 3. Configura le variabili ambiente
+cp .env.example .env
 
-## Automazioni community
+# 4. Genera chiavi VAPID se vuoi le push
+php vendor/bin/web-push generate:vapid
 
-- Pianifica la pubblicazione dei post programmati lanciando periodicamente `php scripts/publish_scheduled_posts.php`. Esempio cron ogni 5 minuti:
-   ```cron
-   */5 * * * * /usr/bin/php /path/to/BianconeriHubPhp/scripts/publish_scheduled_posts.php >> /var/log/bianconerihub_scheduler.log 2>&1
-   ```
-- Accertati che la cartella `uploads/community` sia scrivibile dall’utente del web server prima di abilitare gli upload fotografici.
+# 5. Importa lo schema base
+mysql -u user -p database < database/schema.sql
 
-## Utility CLI
+# 6. Avvia un server locale (opzionale)
+php -S 127.0.0.1:8000 -t .
+```
 
-- `php scripts/check_db_status.php` stampa un riepilogo delle tabelle attese e segnala eventuali colonne mancanti.
-- `php scripts/migrate_comment_features.php` e `php scripts/migrate_poll_votes.php` applicano in modo idempotente le migrazioni community più recenti.
-- `php scripts/remote_debug.php` utilizza le credenziali facoltative configurate nello `.env` (`REMOTE_DEBUG_*`) per verificare rapidamente la connettività ad un database remoto.
+## Configurazione ambiente
+
+Sezioni principali del file `.env`:
+
+```env
+APP_NAME="BianconeriHub"
+APP_TAGLINE="Il cuore pulsante dei tifosi juventini"
+APP_TIMEZONE="Europe/Rome"
+BASE_URL="https://example.com"
+
+DB_DRIVER=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=bianconerihub
+DB_USER=root
+DB_PASSWORD=secret
+
+SESSION_NAME=bianconerihub_session
+NEWS_FEED_URL=https://www.tuttojuve.com/rss
+
+# Email Resend
+RESEND_API_KEY="re_xxx"
+MAIL_FROM_ADDRESS="notifiche@bianconerihub.com"
+MAIL_FROM_NAME="BianconeriHub"
+
+# Notifiche push (facoltative)
+VAPID_PUBLIC_KEY="..."
+VAPID_PRIVATE_KEY="..."
+PUSH_SUBJECT="mailto:contatto@example.com"
+```
+
+> ℹ️ **Resend sandbox**: autorizza `ag.servizi16@gmail.com` (usato per gli alert sugli utenti registrati) se stai testando senza dominio verificato.
+
+## Database e migrazioni
+
+Schema completo in `database/schema.sql` e copia speculare in `bianconerihub/database/schema.sql`.
+
+Migratori idempotenti disponibili in `scripts/`:
+
+```bash
+php scripts/migrate_user_identity.php        # profili e avatar
+php scripts/migrate_user_consents.php        # tabella consensi privacy
+php scripts/migrate_comment_features.php     # risposte/commenti + like
+php scripts/migrate_poll_votes.php           # voti sondaggi community
+php scripts/migrate_story_features.php       # spotlight fan stories
+php scripts/migrate_community_mentions.php   # menzioni utenti @username
+php scripts/migrate_community_news_share.php # share news in community
+php scripts/migrate_password_resets.php      # token reset password
+php scripts/migrate_user_identity.php        # profili estesi
+```
+
+Se aggiorni da versioni precedenti, lancia gli script in sequenza per evitare SQL manuale. Tutte le query sono defensive (CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
+
+## Script CLI utili
+
+| Script | Descrizione |
+| --- | --- |
+| `scripts/sync_news.php` | Forza l'aggiornamento del feed TuttoJuve. |
+| `scripts/publish_scheduled_posts.php` | Pubblica i post programmati. |
+| `scripts/check_db_status.php` | Confronta schema atteso vs database attuale. |
+| `scripts/debug_matches.php` | Debug rapido del calendario partite. |
+| `scripts/remote_debug.php` | Test connettività a database remoti configurati. |
+| `scripts/push_subscriptions.php` | Gestione iscrizioni Web Push via CLI. |
 
 ## Funzionalità principali
 
-- **News live** da TuttoJuve con attribuzione fonte, immagini e lettura approfondita.
-- **Interazioni social** su ogni notizia: like/unlike con feedback immediato e commenti moderati (limite 800 caratteri, badge utente).
-- **Community board** interna con messaggi dei tifosi, statistiche aggregate e badge ruolo.
-- **Calendario partite** con download ICS personalizzato (`?action=download_match_ics&id=...`).
-- **Protezione CSRF** su tutti i form e gestione flash message per feedback utente.
+- **Community board**
+   - Post con immagini (compressione automatica WebP/JPEG a < 200 KB, GIF vincolate).
+   - Like, support reazioni, commenti annidati, menzioni con notifiche.
+   - Spotlight "Raccolta Storie Bianconere" con contenuto reale dal DB.
+- **Profilo tifoso**
+   - Avatar/Cover ottimizzati server-side, badge dinamici, statistiche personali.
+- **Newsroom**
+   - Import feed con deduplica `source_url`, commenti e like per articolo.
+- **Partite**
+   - Calendario stagionale, generazione ICS per singolo match, debug CLI.
+- **Autenticazione**
+   - Registrazione con consensi auto-approvati, email di benvenuto + notifica admin, reset password temporizzato.
+- **Esperienza Mobile**
+   - Header responsive con brand inline, guida installazione PWA per iOS/Android.
 
-## Notifiche push Web Push
+## PWA e notifiche push
 
-1. Installa la libreria PHP per Web Push:
-   ```bash
-   composer require minishlink/web-push
-   ```
-2. Genera le chiavi VAPID (una sola volta):
-   ```bash
-   ./vendor/bin/web-push generate:vapid
-   # oppure
-   npx web-push generate-vapid-keys
-   ```
-3. Aggiungi allo `.env` le nuove variabili:
-   ```env
-   VAPID_PUBLIC_KEY="<chiave pubblica>"
-   VAPID_PRIVATE_KEY="<chiave privata>"
-   PUSH_SUBJECT="mailto:contatto@esempio.com"   # opzionale, ma consigliato
-   PUSH_ICON_PATH="assets/img/push-icon.png"     # opzionale, icona mostrata nelle notifiche
-   ```
-4. Assicurati che il sito sia servito via HTTPS e che `service-worker.js` sia raggiungibile dalla root del dominio.
-5. Gli utenti autenticati possono attivare/disattivare le notifiche dalla pagina community; le preferenze vengono salvate tramite `scripts/push_subscriptions.php` e gestite dal service worker.
+- `service-worker.js` gestisce cache offline e routing fallback su `offline.html`.
+- Banner installazione mobile (`data-pwa-install-banner`) intercetta l'evento `beforeinstallprompt` quando supportato.
+- Guida modale con istruzioni manuali per i browser che non espongono il prompt (Safari iOS).
+- Toggle notifiche all'interno della community con scoping `global` / `following`.
+- Backend Web Push tramite `minishlink/web-push` e chiavi VAPID.
 
-Le notifiche vengono inviate automaticamente quando un post viene pubblicato (immediato o programmato) a:
-- tutti gli utenti che hanno optato per le notifiche globali;
-- i follower dell'autore (se dispongono di una sottoscrizione attiva e hanno scelto l'opzione "Solo gli utenti che seguo").
+### Inviare notifiche
 
-## Testing manuale consigliato
+1. Configura le chiavi VAPID nello `.env`.
+2. Assicurati che gli utenti abbiano permesso push (UI lato community).
+3. Usa `scripts/push_subscriptions.php` o lancia il cron `publish_scheduled_posts.php` (invia in automatico al momento della pubblicazione).
 
-1. Registra un nuovo utente, fai login e verifica la persistenza sessione.
-2. Visita `?page=news` e controlla che le notizie corrispondano al feed RSS.
-3. Apri un articolo, metti/togli "Mi piace" e pubblica un commento.
-4. Scarica un file ICS da `?page=partite` e importalo nel tuo calendario.
-5. Prova a commentare da utente non autenticato per verificare il messaggio di errore.
+## Flussi automatizzati
 
-## Struttura cartelle
+- **Sincronizzazione news** (via cron ogni 15 min): `php scripts/sync_news.php`
+- **Pubblicazione programmata** (ogni 5 min): `php scripts/publish_scheduled_posts.php`
+- **Pulizia sessioni/consensi**: gestita dal core PHP (cron consigliato per garbage collection sessioni).
+- **Email**
+   - Benvenuto immediato (utente).
+   - Alert amministratore a `ag.servizi16@gmail.com`.
+   - Reset password con scadenza 60 minuti.
 
-- `pages/` – viste principali (home, news, community, partite, auth)
-- `includes/` – header, footer, navbar
-- `assets/` – CSS/JS statici
-- `scripts/` – utility CLI (`sync_news.php`)
-- `database/` – schema SQL completo
+## Checklist di test manuali
+
+1. **Registrazione**: esegui signup, controlla email utente + notifica admin, verifica auto-login e cookie consensi.
+2. **Upload foto community**: carica JPEG > 1 MB e verifica compressione < 200 KB, fallback per GIF > 200 KB.
+3. **PWA**: su Android verifica prompt installazione, su iOS controlla apertura guida manuale.
+4. **Push**: abilita push, crea post programmato, attendi invio e verifica ricezione.
+5. **News**: apri pagina `?page=news`, conferma aggiornamento feed e interazione like/commento.
+6. **Calendario**: scarica ICS da `?page=partite`, importa in calendar personale.
+
+## Struttura del progetto
+
+```
+├─ assets/
+│  ├─ css/tailwind.css
+│  ├─ js/app.js
+│  └─ data/ (dizionari comuni, città italiane)
+├─ database/
+│  ├─ schema.sql
+│  └─ verify_schema.sql
+├─ includes/ (header, footer, navbar, componenti)
+├─ pages/ (home, community, news, login, ecc.)
+├─ scripts/ (migrazioni, sync, debug)
+├─ storage/ (cache, logs)
+├─ uploads/ (avatar, cover, foto community)
+├─ vendor/ (Composer)
+├─ manifest.webmanifest
+├─ service-worker.js
+└─ config.php (core con helper DB, auth, email, pwa)
+```
 
 ## Licenza
 
-Progetto a scopo didattico/fan project. Nessuna affiliazione con Juventus FC.
+Progetto fan-based a uso didattico. Non affiliato a Juventus FC. Tutti i marchi appartengono ai rispettivi proprietari.
